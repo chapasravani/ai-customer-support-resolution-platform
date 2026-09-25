@@ -23,28 +23,127 @@ load_dotenv(Path(__file__).parent / ".env")
 MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
 MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "customer_support")
 
-_client: Optional[MongoClient] = None
+from bson import json_util
+
+DATA_FILE = Path(__file__).parent / "data" / "db_store.json"
+DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 
-def get_client() -> MongoClient:
-    """Return a shared MongoClient, creating it on first use with robust fallback."""
-    global _client
+class PersistentCollection:
+    def __init__(self, raw_col, get_db_fn):
+        self._col = raw_col
+        self._get_db = get_db_fn
+
+    def __getattr__(self, name):
+        attr = getattr(self._col, name)
+        if callable(attr):
+            def wrapper(*args, **kwargs):
+                self._get_db()._sync_from_disk()
+                res = attr(*args, **kwargs)
+                if name in (
+                    "insert_one", "insert_many",
+                    "update_one", "update_many",
+                    "delete_one", "delete_many",
+                    "replace_one", "find_one_and_update",
+                    "find_one_and_delete"
+                ):
+                    self._get_db()._sync_to_disk()
+                return res
+            return wrapper
+        return attr
+
+
+class PersistentDatabase:
+    def __init__(self, raw_db):
+        self._db = raw_db
+        self._last_mtime = 0
+        self.name = getattr(raw_db, "name", "customer_support")
+        self._sync_from_disk()
+
+    def _sync_from_disk(self):
+        if not DATA_FILE.exists():
+            return
+        try:
+            mtime = DATA_FILE.stat().st_mtime
+            if mtime > self._last_mtime:
+                content = DATA_FILE.read_text(encoding="utf-8")
+                if content.strip():
+                    data = json_util.loads(content)
+                    for col_name in ["users", "conversations", "tickets", "documents"]:
+                        self._db[col_name].drop()
+                        docs = data.get(col_name, [])
+                        if docs:
+                            self._db[col_name].insert_many(docs)
+                    self._last_mtime = mtime
+        except Exception as exc:
+            print(f"[PersistentDB] Sync from disk error: {exc}")
+
+    def _sync_to_disk(self):
+        try:
+            data = {
+                col: list(self._db[col].find())
+                for col in ["users", "conversations", "tickets", "documents"]
+            }
+            DATA_FILE.write_text(
+                json_util.dumps(data, indent=2),
+                encoding="utf-8",
+            )
+            self._last_mtime = DATA_FILE.stat().st_mtime
+        except Exception as exc:
+            print(f"[PersistentDB] Sync to disk error: {exc}")
+
+    def __getitem__(self, name):
+        return PersistentCollection(self._db[name], lambda: self)
+
+    def __getattr__(self, name):
+        if name in ("users", "conversations", "tickets", "documents"):
+            return self[name]
+        return getattr(self._db, name)
+
+
+class PersistentClient:
+    def __init__(self, raw_client):
+        self._raw_client = raw_client
+        self._databases = {}
+
+    def __getitem__(self, name):
+        if name not in self._databases:
+            self._databases[name] = PersistentDatabase(self._raw_client[name])
+        return self._databases[name]
+
+    def __getattr__(self, name):
+        if name == "admin":
+            return self._raw_client.admin
+        return getattr(self._raw_client, name)
+
+
+_client = None
+_using_mock = False
+
+
+def get_client():
+    """Return a shared MongoClient, creating it on first use with persistent fallback."""
+    global _client, _using_mock
     if _client is None:
         try:
             client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=2500)
             client.admin.command("ping")
             _client = client
+            _using_mock = False
         except Exception as exc:
-            print(f"[MongoDB] Remote connection failed: {exc}. Using in-memory mock database.")
+            print(f"[MongoDB] Remote connection failed: {exc}. Using file-backed persistent local database.")
             try:
                 import mongomock
-                _client = mongomock.MongoClient()
+                raw_mock = mongomock.MongoClient()
+                _client = PersistentClient(raw_mock)
+                _using_mock = True
             except Exception:
                 _client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
+                _using_mock = False
     return _client
 
 
-def get_db() -> Database:
+def get_db():
     """Return the application's database (all 4 collections live in here)."""
     return get_client()[MONGODB_DB_NAME]
 

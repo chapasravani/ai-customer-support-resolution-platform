@@ -20,6 +20,7 @@ env/
 
 # Database and Storage
 chroma_db/
+backend/data/
 *.sqlite
 *.db
 
