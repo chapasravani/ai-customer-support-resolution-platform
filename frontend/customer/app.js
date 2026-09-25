@@ -243,6 +243,22 @@ forgotModal:
    INITIALIZATION
    ========================================================= */
 
+async function fetchModelInfo() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/system/model-info`);
+        if (response.ok) {
+            const info = await response.json();
+            const badge = document.getElementById("headerModelBadge");
+            if (badge && info.display_name) {
+                badge.textContent = `● ${info.display_name}`;
+                badge.title = `Provider: ${info.provider_display} | Primary Model: ${info.model}`;
+            }
+        }
+    } catch (err) {
+        console.warn("Could not load dynamic model info:", err);
+    }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
 
     setupEventListeners();
@@ -251,12 +267,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     setupTheme();
 
+    fetchModelInfo();
+
     /*
-     * IMPORTANT:
-     * If a token already exists, do not blindly trust it.
-     * First validate it against /auth/me.
-     *
-     * This fixes the old "Your session has expired" issue.
+     * If a token already exists, validate it against /auth/me.
      */
 
     if (state.token) {
@@ -698,79 +712,65 @@ async function apiRequest(
 ) {
 
     const headers = {
-
-        "Content-Type":
-            "application/json",
-
+        "Content-Type": "application/json",
         ...(options.headers || {})
-
     };
 
+    const isAuthEndpoint =
+        endpoint.startsWith("/auth/login") ||
+        endpoint.startsWith("/auth/register");
 
-    if (state.token) {
-
-        headers.Authorization =
-            `Bearer ${state.token}`;
-
+    if (state.token && !isAuthEndpoint) {
+        headers.Authorization = `Bearer ${state.token}`;
     }
 
-
-    const response = await fetch(
-        `${API_BASE_URL}${endpoint}`,
-        {
-            ...options,
-            headers
-        }
-    );
-
-
-    /*
-     * Authentication failure.
-     *
-     * Clear the invalid session and return the
-     * user to the login screen.
-     */
-
-    if (
-        response.status === 401 ||
-        response.status === 403
-    ) {
-
-        logout(false);
-
-        throw new Error(
-            "Your session has expired. Please sign in again."
+    let response;
+    try {
+        response = await fetch(
+            `${API_BASE_URL}${endpoint}`,
+            {
+                ...options,
+                headers
+            }
         );
-
+    } catch (netErr) {
+        throw new Error(
+            "Unable to connect to the server. Please check your connection."
+        );
     }
-
 
     let data = {};
-
     try {
-
         data = await response.json();
-
     } catch {
-
         data = {};
-
     }
 
-
     if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+            if (isAuthEndpoint) {
+                throw new Error(
+                    data.detail ||
+                    data.message ||
+                    "Incorrect email or password."
+                );
+            }
+
+            logout(false);
+
+            throw new Error(
+                "Your session has expired. Please sign in again."
+            );
+        }
 
         throw new Error(
             data.detail ||
             data.message ||
             "Something went wrong."
         );
-
     }
 
-
     return data;
-
 }
 
 
@@ -1657,8 +1657,9 @@ function addMessage(
 
         copyButton.type = "button";
         copyButton.className = "message-action-btn";
-        copyButton.title = "Copy response";
-        copyButton.innerHTML = "<span>📋</span> <span>Copy</span>";
+        copyButton.title = "Copy";
+        copyButton.setAttribute("aria-label", "Copy");
+        copyButton.textContent = "📋";
 
         copyButton.addEventListener(
             "click",
@@ -1680,6 +1681,7 @@ function addMessage(
         likeButton.type = "button";
         likeButton.className = "message-action-btn";
         likeButton.title = "Helpful";
+        likeButton.setAttribute("aria-label", "Helpful");
         likeButton.textContent = "👍";
 
         likeButton.addEventListener(
@@ -1697,6 +1699,7 @@ function addMessage(
         dislikeButton.type = "button";
         dislikeButton.className = "message-action-btn";
         dislikeButton.title = "Not helpful";
+        dislikeButton.setAttribute("aria-label", "Not helpful");
         dislikeButton.textContent = "👎";
 
         dislikeButton.addEventListener(
@@ -1727,8 +1730,9 @@ function addMessage(
 
         copyBtn.type = "button";
         copyBtn.className = "message-action-btn";
-        copyBtn.title = "Copy message";
-        copyBtn.innerHTML = "<span>📋</span> <span>Copy</span>";
+        copyBtn.title = "Copy";
+        copyBtn.setAttribute("aria-label", "Copy");
+        copyBtn.textContent = "📋";
 
         copyBtn.addEventListener(
             "click",
@@ -1749,8 +1753,9 @@ function addMessage(
 
         editBtn.type = "button";
         editBtn.className = "message-action-btn";
-        editBtn.title = "Edit message";
-        editBtn.innerHTML = "<span>✏️</span> <span>Edit</span>";
+        editBtn.title = "Edit";
+        editBtn.setAttribute("aria-label", "Edit");
+        editBtn.textContent = "✏️";
 
         editBtn.addEventListener(
             "click",
@@ -1770,8 +1775,9 @@ function addMessage(
 
         resendBtn.type = "button";
         resendBtn.className = "message-action-btn";
-        resendBtn.title = "Resend message";
-        resendBtn.innerHTML = "<span>↻</span> <span>Resend</span>";
+        resendBtn.title = "Retry";
+        resendBtn.setAttribute("aria-label", "Retry");
+        resendBtn.textContent = "↻";
 
         resendBtn.addEventListener(
             "click",
