@@ -1,0 +1,29 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Caches and Virtual Environments
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+ENV/
+env/
+
+# Environment variables & secrets (PROTECTED)
+.env
+.env.*
+!.env.example
+*.bak
+
+# Database and Storage
+chroma_db/
+*.sqlite
+*.db
+
+# Logs and OS files
+*.log
+.DS_Store
+Thumbs.db

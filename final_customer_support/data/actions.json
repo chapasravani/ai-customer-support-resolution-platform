@@ -1,0 +1,55 @@
+{
+  "CAN-20260921-75A66E": {
+    "action": "cancellation",
+    "order_id": "ORD125",
+    "status": "created",
+    "reference": "CAN-20260921-75A66E",
+    "reason": "Customer requested cancellation while order is in Processing status (Not Shipped)."
+  },
+  "APR-20260922-8FF7F6": {
+    "action": "refund",
+    "order_id": "ORD123",
+    "status": "pending_human_approval",
+    "reference": "APR-20260922-8FF7F6",
+    "reason": "Order ORD123 is delayed due to carrier transportation delay, eligible for refund under Late Delivery Policy.",
+    "amount": 1299
+  },
+  "APR-20260923-9AEF93": {
+    "action": "refund",
+    "order_id": "ORD123",
+    "status": "pending_human_approval",
+    "reference": "APR-20260923-9AEF93",
+    "reason": "Carrier transportation delay",
+    "amount": 1299
+  },
+  "APR-20260923-664D86": {
+    "action": "refund",
+    "order_id": "ORD123",
+    "status": "pending_human_approval",
+    "reference": "APR-20260923-664D86",
+    "reason": "Order delayed due to carrier issue",
+    "amount": 1299
+  },
+  "APR-20260923-9E85EB": {
+    "action": "refund",
+    "order_id": "ORD123",
+    "status": "pending_human_approval",
+    "reference": "APR-20260923-9E85EB",
+    "reason": "Carrier transportation delay",
+    "amount": 1299
+  },
+  "CAN-20260924-26644A": {
+    "action": "cancellation",
+    "order_id": "ORD125",
+    "status": "created",
+    "reference": "CAN-20260924-26644A",
+    "reason": "customer requested cancellation"
+  },
+  "CAN-20260925-F96DF4": {
+    "action": "cancellation",
+    "order_id": "ORD125",
+    "status": "created",
+    "reference": "CAN-20260925-F96DF4",
+    "reason": "customer requested cancellation"
+  }
+}

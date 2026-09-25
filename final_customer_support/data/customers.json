@@ -1,0 +1,14 @@
+{
+  "C101": {
+    "name": "Sravani Chapa",
+    "email": "sravani@example.com",
+    "phone": "+91-9000000000",
+    "account_status": "Active"
+  },
+  "C102": {
+    "name": "Rahul Kumar",
+    "email": "rahul@example.com",
+    "phone": "+91-9111111111",
+    "account_status": "Active"
+  }
+}

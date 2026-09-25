@@ -1,0 +1,13 @@
+Customer Support Policy
+
+Delayed Orders:
+Customers can request support when an order is delayed beyond the expected delivery date.
+
+Replacement Policy:
+Replacement requests for eligible delayed orders may require human approval depending on the order value.
+
+Refund Policy:
+Customers may request a refund for eligible orders according to the applicable support policy.
+
+Escalation:
+Cases that require manual review should be escalated to human support.

@@ -1,0 +1,65 @@
+{
+  "CASE-20260921-EB7FC8": {
+    "case_id": "CASE-20260921-EB7FC8",
+    "customer_id": "C101",
+    "order_id": "ORD123",
+    "issue": "Order ORD123 ($1299) is delayed and customer is requesting options/resolution. High-value order requires human approval for refund or replacement.",
+    "reason": "Order amount $1299 exceeds the $500 threshold for automated refund/replacement, requiring human approval per policy.",
+    "status": "open",
+    "created_at": "2026-09-21T04:10:11.701744+00:00"
+  },
+  "CASE-20260921-C6A547": {
+    "case_id": "CASE-20260921-C6A547",
+    "customer_id": "C101",
+    "order_id": "UNKNOWN",
+    "issue": "Customer stated they have a problem with their order, but no specific order ID or issue details have been provided yet.",
+    "reason": "Missing order ID and issue details; requires human support as per General Support Policy.",
+    "status": "open",
+    "created_at": "2026-09-21T11:42:01.231722+00:00"
+  },
+  "CASE-20260922-4D3C65": {
+    "case_id": "CASE-20260922-4D3C65",
+    "customer_id": "C101",
+    "order_id": "ORD123",
+    "issue": "Order ORD123 is delayed due to carrier transportation delay, and the customer is inquiring about why it is delayed. Order amount is $1299 (high value), requiring human review for any financial adjustment or replacement.",
+    "reason": "High-value order inquiry regarding delay requiring human review.",
+    "status": "open",
+    "created_at": "2026-09-22T12:58:07.765214+00:00"
+  },
+  "CASE-20260923-21AB41": {
+    "case_id": "CASE-20260923-21AB41",
+    "customer_id": "C101",
+    "order_id": "ORD123",
+    "issue": "Replacement request for delayed order ORD123 exceeding $500 requires human approval.",
+    "reason": "Order amount is $1299 (above $500 threshold), requiring human review and approval per replacement policy.",
+    "status": "open",
+    "created_at": "2026-09-23T04:11:06.511147+00:00"
+  },
+  "CASE-20260923-32AF7A": {
+    "case_id": "CASE-20260923-32AF7A",
+    "customer_id": "C101",
+    "order_id": "ORD123",
+    "issue": "Replacement request for delayed order ORD123 (valued at $1299) exceeding the $500 threshold requiring human approval.",
+    "reason": "Order value ($1299) exceeds the $500 threshold, requiring human approval before a replacement can be processed according to company policy.",
+    "status": "open",
+    "created_at": "2026-09-23T04:26:38.022822+00:00"
+  },
+  "CASE-20260924-E34DCA": {
+    "case_id": "CASE-20260924-E34DCA",
+    "customer_id": "C101",
+    "order_id": "ORD123",
+    "issue": "Refund request for delayed order ORD123",
+    "reason": "Customer requested refund due to delayed order",
+    "status": "open",
+    "created_at": "2026-09-24T02:51:52.805153+00:00"
+  },
+  "CASE-20260924-0626F2": {
+    "case_id": "CASE-20260924-0626F2",
+    "customer_id": "C101",
+    "order_id": "ORD123",
+    "issue": "Customer is requesting a replacement for order ORD123.",
+    "reason": "The investigation indicates that human intervention is required due to the high order value and delayed shipment status.",
+    "status": "open",
+    "created_at": "2026-09-24T12:50:50.724658+00:00"
+  }
+}

@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SupportAI — Admin & Knowledge Operations</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- =========================================================
+         AUTH / ADMIN SIGN IN SCREEN
+         ========================================================= -->
+    <section id="auth-screen" class="auth-screen">
+        <div class="auth-card">
+            <div class="brand-badge">
+                <div class="brand-icon">✦</div>
+                <div class="brand-meta">
+                    <h2>SupportAI</h2>
+                    <span>Admin Operations Console</span>
+                </div>
+            </div>
+
+            <div class="auth-header">
+                <h1>Admin Sign In</h1>
+                <p class="subtitle">Sign in to manage RAG knowledge documents, indexing, and human-in-the-loop escalations.</p>
+            </div>
+
+            <form id="login-form">
+                <div class="form-group">
+                    <label for="email">Administrator Email</label>
+                    <input id="email" type="email" placeholder="admin@supportai.com" required autocomplete="email">
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input id="password" type="password" placeholder="Enter your admin password" required autocomplete="current-password">
+                </div>
+
+                <button type="submit" id="login-button" class="primary-btn">
+                    <span>Sign into Dashboard</span>
+                    <span class="btn-arrow">→</span>
+                </button>
+            </form>
+
+            <p id="login-error" class="error-message"></p>
+
+            <div class="auth-footer-nav">
+                <a href="../customer/index.html" class="back-link">← Back to Customer Support</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- =========================================================
+         ADMIN DASHBOARD
+         ========================================================= -->
+    <section id="dashboard" class="dashboard hidden">
+        <!-- TOP HEADER -->
+        <header class="topbar">
+            <div class="topbar-left">
+                <div class="brand-icon-sm">✦</div>
+                <div>
+                    <div class="app-title">SupportAI <span>Control Center</span></div>
+                    <div class="app-subtitle">RAG Knowledge Base & Human-in-the-Loop Operations</div>
+                </div>
+            </div>
+
+            <div class="admin-actions">
+                <div class="admin-profile-pill">
+                    <span class="status-indicator online"></span>
+                    <span class="admin-label">Admin:</span>
+                    <strong id="admin-name">Admin</strong>
+                </div>
+
+                <a href="../customer/index.html" class="nav-link-btn" title="View Customer Portal">
+                    <span>Customer App</span>
+                    <span class="external-arrow">↗</span>
+                </a>
+
+                <button id="logout-button" class="logout-btn">
+                    <span>Sign Out</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- MAIN DASHBOARD CONTENT -->
+        <main class="content-grid">
+
+            <!-- WORKFLOW OVERVIEW PIPELINE -->
+            <div class="full-width-card workflow-banner">
+                <div class="workflow-col">
+                    <div class="workflow-title">
+                        <span class="workflow-tag rag">RAG Knowledge Pipeline</span>
+                        <h3>Knowledge Ingestion to AI Agent</h3>
+                    </div>
+                    <div class="pipeline-steps">
+                        <div class="step">
+                            <span class="step-num">1</span>
+                            <span class="step-text">Admin Upload</span>
+                        </div>
+                        <span class="pipeline-arrow">→</span>
+                        <div class="step">
+                            <span class="step-num">2</span>
+                            <span class="step-text">Text Processing</span>
+                        </div>
+                        <span class="pipeline-arrow">→</span>
+                        <div class="step">
+                            <span class="step-num">3</span>
+                            <span class="step-text">Indexed in Vector DB</span>
+                        </div>
+                        <span class="pipeline-arrow">→</span>
+                        <div class="step highlight">
+                            <span class="step-num">✦</span>
+                            <span class="step-text">Available to Knowledge Agent</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="workflow-divider"></div>
+
+                <div class="workflow-col">
+                    <div class="workflow-title">
+                        <span class="workflow-tag hitl">Human-In-The-Loop Flow</span>
+                        <h3>Escalation & Case Management</h3>
+                    </div>
+                    <div class="pipeline-steps">
+                        <div class="step">
+                            <span class="step-num">1</span>
+                            <span class="step-text">Customer Issue</span>
+                        </div>
+                        <span class="pipeline-arrow">→</span>
+                        <div class="step">
+                            <span class="step-num">2</span>
+                            <span class="step-text">AI Investigation</span>
+                        </div>
+                        <span class="pipeline-arrow">→</span>
+                        <div class="step">
+                            <span class="step-num">3</span>
+                            <span class="step-text">Escalation Agent Handoff</span>
+                        </div>
+                        <span class="pipeline-arrow">→</span>
+                        <div class="step highlight">
+                            <span class="step-num">✓</span>
+                            <span class="step-text">Human Review & Action</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SECTION 1: KNOWLEDGE DOCUMENTS / RAG -->
+            <section class="card">
+                <div class="section-header">
+                    <div class="section-title-wrap">
+                        <div class="section-icon">📚</div>
+                        <div>
+                            <h2>Knowledge Base & RAG Documents</h2>
+                            <p>Upload policy documents, FAQs, and return guidelines for retrieval augmentation.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="upload-zone">
+                    <div class="upload-inputs">
+                        <input id="document-file" type="file" accept=".pdf,.txt,.md" class="file-input">
+                        <button id="upload-button" class="primary-btn">
+                            <span>Upload & Index Document</span>
+                        </button>
+                    </div>
+                    <div class="upload-meta">
+                        <span class="format-pill">Supported formats: PDF, TXT, Markdown (.md)</span>
+                    </div>
+                </div>
+
+                <p id="upload-status" class="status-message"></p>
+
+                <div class="table-header-bar">
+                    <h3>Indexed Documents</h3>
+                    <button id="refresh-button" class="secondary-btn">
+                        <span>↻ Refresh List</span>
+                    </button>
+                </div>
+
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Document Name</th>
+                                <th>Status</th>
+                                <th>Chunks</th>
+                                <th>Uploaded At</th>
+                                <th class="action-col">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="documents-body">
+                            <tr>
+                                <td colspan="5" class="empty-state">
+                                    <div class="empty-inner">
+                                        <span>◌</span>
+                                        <p>No documents loaded in the knowledge base.</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- SECTION 2: SUPPORT CASES & ESCALATIONS -->
+            <section class="card support-cases-card">
+                <div class="section-header">
+                    <div class="section-title-wrap">
+                        <div class="section-icon">🛡️</div>
+                        <div>
+                            <h2>Escalated Support Cases</h2>
+                            <p>Cases requiring human oversight, authorization, or carrier investigation handoff.</p>
+                        </div>
+                    </div>
+                    <button id="refresh-cases-button" class="secondary-btn">
+                        <span>↻ Refresh Cases</span>
+                    </button>
+                </div>
+
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Case Ref</th>
+                                <th>Order ID</th>
+                                <th>Issue Type</th>
+                                <th>Priority</th>
+                                <th>Status</th>
+                                <th class="action-col">Review Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="cases-body">
+                            <tr>
+                                <td colspan="6" class="empty-state">
+                                    <div class="empty-inner">
+                                        <span>◌</span>
+                                        <p>No active support cases or escalations found.</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        </main>
+    </section>
+
+    <script src="app.js"></script>
+</body>
+</html>

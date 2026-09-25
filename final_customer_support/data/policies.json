@@ -1,0 +1,30 @@
+{
+  "late_delivery": {
+    "name": "Late Delivery Policy",
+    "description": "Customers whose orders are delayed may request cancellation, refund, or replacement depending on order status and eligibility.",
+    "refund_available": true,
+    "replacement_available": true,
+    "human_review_required": false
+  },
+  "damaged_order": {
+    "name": "Damaged Order Policy",
+    "description": "A delivered damaged item may qualify for refund or replacement after verification. High-value actions require human approval.",
+    "refund_available": true,
+    "replacement_available": true,
+    "human_review_required": false
+  },
+  "cancelled_order": {
+    "name": "Cancelled Order Policy",
+    "description": "Cancelled orders may be eligible for a refund depending on payment and cancellation status.",
+    "refund_available": true,
+    "replacement_available": false,
+    "human_review_required": false
+  },
+  "general_support": {
+    "name": "General Support Policy",
+    "description": "Issues that cannot be verified using available customer, order, and policy information should be escalated to human support.",
+    "refund_available": false,
+    "replacement_available": false,
+    "human_review_required": true
+  }
+}

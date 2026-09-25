@@ -1,0 +1,35 @@
+{
+  "ORD123": {
+    "customer_id": "C101",
+    "product": "Laptop",
+    "order_date": "2026-09-08",
+    "expected_delivery": "2026-09-14",
+    "status": "Delayed",
+    "carrier": "FastShip",
+    "tracking_status": "In Transit",
+    "delay_reason": "Carrier transportation delay",
+    "amount": 1299
+  },
+  "ORD124": {
+    "customer_id": "C102",
+    "product": "Headphones",
+    "order_date": "2026-09-10",
+    "expected_delivery": "2026-09-15",
+    "status": "Delivered",
+    "carrier": "QuickDelivery",
+    "tracking_status": "Delivered",
+    "delay_reason": null,
+    "amount": 149
+  },
+  "ORD125": {
+    "customer_id": "C101",
+    "product": "Smartphone",
+    "order_date": "2026-09-12",
+    "expected_delivery": "2026-09-18",
+    "status": "Processing",
+    "carrier": "FastShip",
+    "tracking_status": "Not Shipped",
+    "delay_reason": null,
+    "amount": 699
+  }
+}

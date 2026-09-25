@@ -1,0 +1,46 @@
+openapi: 3.0.3
+info:
+  title: Customer Support Mock Enterprise API
+  version: 1.0.0
+servers:
+  - url: http://127.0.0.1:8001
+paths:
+  /customers/{customer_id}:
+    get:
+      operationId: getCustomer
+      parameters:
+        - in: path
+          name: customer_id
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Customer record
+  /orders/{order_id}:
+    get:
+      operationId: getOrder
+      parameters:
+        - in: path
+          name: order_id
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Order record
+  /support-cases:
+    post:
+      operationId: createSupportCase
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_id, order_id, issue]
+              properties:
+                customer_id: {type: string}
+                order_id: {type: string}
+                issue: {type: string}
+      responses:
+        '200':
+          description: Support case created

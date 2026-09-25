@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AI Customer Support & Resolution Platform">
+    <title>SupportAI — Customer Support & Resolution Platform</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            --bg-page: #f8fafc;
+            --bg-card: #ffffff;
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --text-muted: #64748b;
+            --border-color: #e2e8f0;
+            --primary: #4f46e5;
+            --primary-hover: #4338ca;
+            --primary-light: #eef2ff;
+            --accent-purple: #7c3aed;
+            --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+            --shadow-hover: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
+            --radius-md: 12px;
+            --radius-lg: 16px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font-sans);
+            background-color: var(--bg-page);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem 1.5rem;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .landing-container {
+            width: 100%;
+            max-width: 860px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 3rem 2.5rem;
+            box-shadow: var(--shadow-md);
+        }
+
+        .brand-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 2rem;
+        }
+
+        .brand-icon {
+            width: 44px;
+            height: 44px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent-purple) 100%);
+            color: #fff;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+            font-weight: 700;
+        }
+
+        .brand-title {
+            font-size: 1.35rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.02em;
+        }
+
+        .brand-subtitle {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .hero-section {
+            margin-bottom: 2.5rem;
+        }
+
+        .hero-badge {
+            display: inline-block;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--primary);
+            background: var(--primary-light);
+            padding: 0.35rem 0.75rem;
+            border-radius: 9999px;
+            margin-bottom: 0.75rem;
+        }
+
+        .hero-title {
+            font-size: 2rem;
+            font-weight: 800;
+            line-height: 1.25;
+            color: var(--text-primary);
+            letter-spacing: -0.03em;
+            margin-bottom: 0.5rem;
+        }
+
+        .hero-description {
+            font-size: 1rem;
+            color: var(--text-secondary);
+            max-width: 600px;
+            line-height: 1.5;
+        }
+
+        .portals-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 1.25rem;
+            margin-bottom: 2rem;
+        }
+
+        .portal-card {
+            display: flex;
+            flex-direction: column;
+            text-decoration: none;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 1.5rem;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .portal-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-hover);
+            border-color: var(--primary);
+        }
+
+        .portal-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            margin-bottom: 1rem;
+        }
+
+        .portal-icon.customer {
+            background: #eef2ff;
+            color: var(--primary);
+        }
+
+        .portal-icon.admin {
+            background: #f5f3ff;
+            color: var(--accent-purple);
+        }
+
+        .portal-icon.signup {
+            background: #ecfdf5;
+            color: #059669;
+        }
+
+        .portal-name {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 0.35rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .portal-arrow {
+            color: var(--text-muted);
+            font-weight: 600;
+            transition: transform 0.2s ease;
+        }
+
+        .portal-card:hover .portal-arrow {
+            color: var(--primary);
+            transform: translateX(3px);
+        }
+
+        .portal-desc {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            line-height: 1.45;
+            margin-bottom: 1rem;
+            flex-grow: 1;
+        }
+
+        .portal-features {
+            list-style: none;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+            border-top: 1px solid var(--border-color);
+            padding-top: 0.75rem;
+        }
+
+        .portal-features li::before {
+            content: "✓ ";
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .footer-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-top: 1px solid var(--border-color);
+            padding-top: 1.5rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            flex-wrap: wrap;
+            gap: 0.75rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #10b981;
+            display: inline-block;
+            margin-right: 0.35rem;
+        }
+
+        @media (max-width: 640px) {
+            .landing-container {
+                padding: 1.75rem 1.25rem;
+            }
+            .hero-title {
+                font-size: 1.5rem;
+            }
+            .portals-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="landing-container">
+        <header class="brand-header">
+            <div class="brand-icon">✦</div>
+            <div>
+                <div class="brand-title">SupportAI</div>
+                <div class="brand-subtitle">AI Customer Support & Resolution Platform</div>
+            </div>
+        </header>
+
+        <section class="hero-section">
+            <span class="hero-badge">Unified Platform Portal</span>
+            <h1 class="hero-title">Intelligent AI Support &amp; Resolution</h1>
+            <p class="hero-description">Select an entry portal to access customer support workflows, knowledge retrieval, or administrative operations.</p>
+        </section>
+
+        <div class="portals-grid">
+            <a href="./customer/index.html" class="portal-card">
+                <div class="portal-icon customer">💬</div>
+                <div class="portal-name">
+                    <span>Customer Support</span>
+                    <span class="portal-arrow">→</span>
+                </div>
+                <p class="portal-desc">Direct customer chat assistant for order inquiries, status tracking, replacements, and support policies.</p>
+                <ul class="portal-features">
+                    <li>Order status & tracking</li>
+                    <li>Verified account assistance</li>
+                    <li>Interactive AI resolution</li>
+                </ul>
+            </a>
+
+            <a href="./admin/index.html" class="portal-card">
+                <div class="portal-icon admin">⚙️</div>
+                <div class="portal-name">
+                    <span>Admin Operations</span>
+                    <span class="portal-arrow">→</span>
+                </div>
+                <p class="portal-desc">Enterprise operations console to manage RAG knowledge base documents and review escalated cases.</p>
+                <ul class="portal-features">
+                    <li>RAG document ingestion</li>
+                    <li>Vector index management</li>
+                    <li>Human-in-the-loop review</li>
+                </ul>
+            </a>
+
+            <a href="./customer/index.html" class="portal-card">
+                <div class="portal-icon signup">✨</div>
+                <div class="portal-name">
+                    <span>Customer Account</span>
+                    <span class="portal-arrow">→</span>
+                </div>
+                <p class="portal-desc">Sign in or register a new customer account to retain your verified support session history.</p>
+                <ul class="portal-features">
+                    <li>Secure JWT authentication</li>
+                    <li>Conversation history</li>
+                    <li>Personalized support</li>
+                </ul>
+            </a>
+        </div>
+
+        <footer class="footer-bar">
+            <div>
+                <span class="status-dot"></span>
+                <span>Direct Google Gemini &amp; ADK Orchestration Active</span>
+            </div>
+            <div>
+                <span>SupportAI v2.0 • Unified Server :3000</span>
+            </div>
+        </footer>
+    </div>
+</body>
+</html>
