@@ -4,12 +4,11 @@
 #
 #   pip install -r final_customer_support/requirements.txt -r backend/requirements.txt
 #
-# Later phases will append to this same file:
-#   Phase 5: pdfplumber, python-docx, chromadb
 
 # Phase 1
 pymongo==4.15.5
 python-dotenv==1.1.1
+mongomock==4.3.0
 
 # Phase 2 - auth + FastAPI routes
 pyjwt==2.10.1
@@ -17,5 +16,12 @@ bcrypt==4.2.1
 python-multipart==0.0.20
 email-validator==2.2.0
 
-# Phase 2 - testing only (FastAPI's TestClient needs httpx)
+# RAG and Document Ingestion
+chromadb==1.5.9
+pdfplumber==0.11.10
+python-docx==1.2.0
+
+# Testing
 httpx==0.28.1
+pytest==9.1.1
+pytest-asyncio==1.4.0

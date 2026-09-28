@@ -6,16 +6,26 @@ create/read/update functions. This file only validates what comes in
 over HTTP and shapes what goes back out.
 """
 
+from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, EmailStr, Field
+
+
+class TicketStatus(str, Enum):
+    OPEN = "open"
+    INVESTIGATING = "investigating"
+    ESCALATED = "escalated"
+    RESOLVED = "resolved"
+    CLOSED = "closed"
+    IN_PROGRESS = "in_progress"
 
 
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
     name: str
-    role: str = Field(default="customer", pattern="^(customer|admin)$")
+    role: Optional[str] = "customer"
 
 
 class LoginRequest(BaseModel):
@@ -34,10 +44,11 @@ class UserResponse(BaseModel):
     email: str
     name: str
     role: str
+    customer_id: Optional[str] = None
 
 
 class ChatMessageRequest(BaseModel):
-    message: str = Field(min_length=1)
+    message: str = Field(min_length=1, max_length=4000)
     conversation_id: Optional[str] = None
 
 
@@ -50,6 +61,28 @@ class ConversationUpdateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=80)
 
 
+class FeedbackRequest(BaseModel):
+    conversation_id: str
+    rating: str = Field(pattern="^(like|dislike)$")
+    message_index: Optional[int] = None
+
+
 class TicketStatusUpdate(BaseModel):
-    status: str
+    status: TicketStatus
     resolution_summary: Optional[str] = ""
+
+
+class ModelInfoResponse(BaseModel):
+    provider: str
+    provider_display: str
+    model: str
+    fallback_model: str
+    display_name: str
+
+
+class HealthResponse(BaseModel):
+    status: str
+    storage_type: str
+    mongodb_connected: bool
+    persistent_fallback_active: bool
+    details: Optional[str] = None

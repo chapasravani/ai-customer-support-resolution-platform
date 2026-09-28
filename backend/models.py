@@ -36,7 +36,7 @@ def _oid(id_str: str) -> Optional[ObjectId]:
 # USERS
 # ---------------------------------------------------------------------------
 
-def create_user(email: str, hashed_password: str, name: str, role: str = "customer") -> dict:
+def create_user(email: str, hashed_password: str, name: str, role: str = "customer", customer_id: str = "") -> dict:
     """
     Insert a new user document.
 
@@ -45,16 +45,69 @@ def create_user(email: str, hashed_password: str, name: str, role: str = "custom
     in the Phase 2 auth module, which is the only thing that should
     import a hashing library.
     """
+    clean_email = email.lower().strip()
+    if not customer_id and role == "customer":
+        try:
+            from final_customer_support.tools.business_actions import _load
+            customers = _load("customers.json")
+            for cid, cdata in customers.items():
+                if (cdata.get("email") or "").lower().strip() == clean_email:
+                    customer_id = cid
+                    break
+        except Exception:
+            pass
+
     doc = {
-        "email": email.lower().strip(),
+        "email": clean_email,
         "hashed_password": hashed_password,
         "name": name,
         "role": role,
         "created_at": _now(),
     }
+    if customer_id:
+        doc["customer_id"] = customer_id
+
     result = get_db().users.insert_one(doc)
     doc["_id"] = result.inserted_id
     return doc
+
+
+def get_customer_id_for_user(user: dict) -> str:
+    """
+    Return the customer_id associated with a user.
+    Checks user document, then matches by email against customers.json,
+    or generates a consistent customer ID for newly registered users.
+    """
+    if not user:
+        return ""
+    if user.get("customer_id"):
+        return user["customer_id"]
+
+    email = (user.get("email") or "").lower().strip()
+    if email:
+        try:
+            from final_customer_support.tools.business_actions import _load
+            customers = _load("customers.json")
+            for cid, cdata in customers.items():
+                if (cdata.get("email") or "").lower().strip() == email:
+                    user_id = user.get("_id")
+                    if user_id:
+                        get_db().users.update_one({"_id": user_id}, {"$set": {"customer_id": cid}})
+                    user["customer_id"] = cid
+                    return cid
+        except Exception:
+            pass
+
+    user_id_str = str(user.get("_id", "unknown"))
+    cid = f"C_{user_id_str[:6]}"
+    user_id = user.get("_id")
+    if user_id:
+        try:
+            get_db().users.update_one({"_id": user_id}, {"$set": {"customer_id": cid}})
+            user["customer_id"] = cid
+        except Exception:
+            pass
+    return cid
 
 
 def get_user_by_email(email: str) -> Optional[dict]:
@@ -102,6 +155,7 @@ def create_conversation(user_id: str) -> dict:
         "status": "active",
         "title": "New conversation",
         "messages": [],
+        "message_count": 0,
         "started_at": _now(),
         "updated_at": _now(),
     }
@@ -124,6 +178,7 @@ def add_message(conversation_id: str, role: str, content: str) -> Optional[dict]
 
     update = {
         "$push": {"messages": message},
+        "$inc": {"message_count": 1},
         "$set": {"updated_at": _now()},
     }
 
@@ -183,16 +238,58 @@ def get_conversation(conversation_id: str) -> Optional[dict]:
     return get_db().conversations.find_one({"_id": oid})
 
 
-def list_conversations_for_user(user_id: str, limit: int = 20) -> list[dict]:
+def list_conversations_for_user(
+    user_id: str,
+    limit: int = 20,
+    skip: int = 0,
+    include_messages: bool = True,
+) -> list[dict]:
     """Most recently updated conversations first - this is what the sidebar shows."""
     oid = _oid(user_id) or user_id
+    projection = None if include_messages else {"messages": 0}
     cursor = (
         get_db()
-        .conversations.find({"user_id": oid})
+        .conversations.find({"user_id": oid}, projection=projection)
         .sort("updated_at", -1)
+        .skip(skip)
         .limit(limit)
     )
-    return list(cursor)
+    convos = list(cursor)
+    for c in convos:
+        if "message_count" not in c:
+            if "messages" in c:
+                c["message_count"] = len(c["messages"])
+            else:
+                doc = get_db().conversations.find_one({"_id": c["_id"]}, {"messages": 1})
+                c["message_count"] = len(doc.get("messages", [])) if doc else 0
+    return convos
+
+
+def save_feedback(
+    conversation_id: str,
+    user_id: str,
+    rating: str,
+    message_index: Optional[int] = None,
+) -> bool:
+    """Record customer satisfaction feedback for a conversation (L4)."""
+    oid = _oid(conversation_id)
+    if not oid:
+        return False
+    u_oid = _oid(user_id) or user_id
+    convo = get_db().conversations.find_one({"_id": oid, "user_id": u_oid})
+    if not convo:
+        return False
+
+    feedback_entry = {
+        "rating": rating,
+        "message_index": message_index,
+        "recorded_at": _now(),
+    }
+    result = get_db().conversations.update_one(
+        {"_id": oid, "user_id": u_oid},
+        {"$push": {"feedback": feedback_entry}, "$set": {"updated_at": _now()}},
+    )
+    return result.matched_count > 0
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +341,25 @@ def update_ticket_status(ticket_id: str, status: str, resolution_summary: str = 
     if resolution_summary:
         update["resolution_summary"] = resolution_summary
     result = get_db().tickets.update_one({"ticket_id": ticket_id}, {"$set": update})
-    return result.modified_count > 0
+    return result.matched_count > 0
+
+
+def get_ticket_for_conversation(conversation_id: str) -> Optional[dict]:
+    """Retrieve existing support ticket associated with a conversation (H1)."""
+    oid = _oid(conversation_id)
+    if not oid and not conversation_id:
+        return None
+    query = {"$or": [{"conversation_id": oid}, {"conversation_id": str(conversation_id)}]} if oid else {"conversation_id": str(conversation_id)}
+    return get_db().tickets.find_one(query)
+
+
+def update_ticket_issue(ticket_id: str, issue: str, order_id: str = "") -> bool:
+    """Update issue/order on an existing ticket (H1)."""
+    update: dict[str, Any] = {"issue": issue, "updated_at": _now()}
+    if order_id:
+        update["order_id"] = order_id
+    result = get_db().tickets.update_one({"ticket_id": ticket_id}, {"$set": update})
+    return result.matched_count > 0
 
 
 def list_tickets(status: Optional[str] = None, user_id: Optional[str] = None, limit: int = 50) -> list[dict]:

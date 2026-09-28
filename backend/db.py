@@ -8,25 +8,53 @@ is exactly one place that knows the connection string.
 """
 
 import os
+import tempfile
+import threading
 from pathlib import Path
-from typing import Optional
-
+from bson import json_util
 from dotenv import load_dotenv
 from pymongo import MongoClient
-from pymongo.database import Database
 
-# Load backend/.env if it exists. This does NOT touch or read the
-# existing final_customer_support/.env file - the two subsystems keep
-# their own environment files for now.
-load_dotenv(Path(__file__).parent / ".env")
+# Load backend/.env if it exists. override=True ensures local .env settings
+# take precedence over any stale process/shell environment variables.
+load_dotenv(Path(__file__).parent / ".env", override=True)
 
-MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
-MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "customer_support")
+MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017").strip().strip("\"'")
+MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "customer_support").strip().strip("\"'")
 
-from bson import json_util
+def get_data_file() -> Path:
+    custom = os.getenv("SUPPORTAI_DATA_FILE")
+    if custom:
+        p = Path(custom)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+    default_p = Path(__file__).parent / "data" / "db_store.json"
+    default_p.parent.mkdir(parents=True, exist_ok=True)
+    return default_p
 
-DATA_FILE = Path(__file__).parent / "data" / "db_store.json"
-DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+DATA_FILE = get_data_file()
+
+# Thread-safe reentrant lock protecting local fallback reads, writes, and syncs
+_db_lock = threading.RLock()
+
+
+def _ensure_indexes_on_db(target_db) -> None:
+    """Helper to recreate application indexes directly on a database instance."""
+    # Exactly one user per email address.
+    target_db.users.create_index("email", unique=True)
+
+    # The customer chat sidebar needs "this user's conversations, newest first".
+    target_db.conversations.create_index([("user_id", 1), ("updated_at", -1)])
+
+    # The admin ticket dashboard needs "this user's tickets" and "tickets by status".
+    target_db.tickets.create_index([("user_id", 1)])
+    target_db.tickets.create_index([("status", 1)])
+    target_db.tickets.create_index("ticket_id", unique=True)
+    target_db.tickets.create_index([("conversation_id", 1)])
+
+    # The admin documents page needs "documents by status" (processing/indexed/failed).
+    target_db.documents.create_index([("status", 1)])
 
 
 class PersistentCollection:
@@ -38,17 +66,18 @@ class PersistentCollection:
         attr = getattr(self._col, name)
         if callable(attr):
             def wrapper(*args, **kwargs):
-                self._get_db()._sync_from_disk()
-                res = attr(*args, **kwargs)
-                if name in (
-                    "insert_one", "insert_many",
-                    "update_one", "update_many",
-                    "delete_one", "delete_many",
-                    "replace_one", "find_one_and_update",
-                    "find_one_and_delete"
-                ):
-                    self._get_db()._sync_to_disk()
-                return res
+                with _db_lock:
+                    self._get_db()._sync_from_disk()
+                    res = attr(*args, **kwargs)
+                    if name in (
+                        "insert_one", "insert_many",
+                        "update_one", "update_many",
+                        "delete_one", "delete_many",
+                        "replace_one", "find_one_and_update",
+                        "find_one_and_delete"
+                    ):
+                        self._get_db()._sync_to_disk()
+                    return res
             return wrapper
         return attr
 
@@ -58,39 +87,77 @@ class PersistentDatabase:
         self._db = raw_db
         self._last_mtime = 0
         self.name = getattr(raw_db, "name", "customer_support")
-        self._sync_from_disk()
+        with _db_lock:
+            self._sync_from_disk()
 
     def _sync_from_disk(self):
-        if not DATA_FILE.exists():
-            return
-        try:
-            mtime = DATA_FILE.stat().st_mtime
-            if mtime > self._last_mtime:
-                content = DATA_FILE.read_text(encoding="utf-8")
-                if content.strip():
-                    data = json_util.loads(content)
-                    for col_name in ["users", "conversations", "tickets", "documents"]:
-                        self._db[col_name].drop()
-                        docs = data.get(col_name, [])
-                        if docs:
-                            self._db[col_name].insert_many(docs)
+        with _db_lock:
+            data_file = get_data_file()
+            if not data_file.exists():
+                _ensure_indexes_on_db(self._db)
+                return
+            try:
+                mtime = data_file.stat().st_mtime
+                if mtime > self._last_mtime:
+                    content = data_file.read_text(encoding="utf-8")
+                    if content.strip():
+                        try:
+                            data = json_util.loads(content)
+                        except Exception as parse_err:
+                            # Do not silently continue after detecting corrupted persistent storage
+                            raise RuntimeError(
+                                f"Corrupted or unparseable persistent database file detected at '{data_file}': {parse_err}"
+                            ) from parse_err
+
+                        for col_name in ["users", "conversations", "tickets", "documents"]:
+                            self._db[col_name].drop()
+                            docs = data.get(col_name, [])
+                            if docs:
+                                self._db[col_name].insert_many(docs)
+                        # Re-create/ensure required indexes after reload
+                        _ensure_indexes_on_db(self._db)
+                    else:
+                        _ensure_indexes_on_db(self._db)
                     self._last_mtime = mtime
-        except Exception as exc:
-            print(f"[PersistentDB] Sync from disk error: {exc}")
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                raise RuntimeError(f"Failed to sync persistent database from disk: {exc}") from exc
 
     def _sync_to_disk(self):
-        try:
-            data = {
-                col: list(self._db[col].find())
-                for col in ["users", "conversations", "tickets", "documents"]
-            }
-            DATA_FILE.write_text(
-                json_util.dumps(data, indent=2),
-                encoding="utf-8",
-            )
-            self._last_mtime = DATA_FILE.stat().st_mtime
-        except Exception as exc:
-            print(f"[PersistentDB] Sync to disk error: {exc}")
+        with _db_lock:
+            data_file = get_data_file()
+            tmp_path = None
+            try:
+                data = {
+                    col: list(self._db[col].find())
+                    for col in ["users", "conversations", "tickets", "documents"]
+                }
+                serialized = json_util.dumps(data, indent=2)
+
+                # Atomic write using temporary file in same folder followed by atomic replace
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=data_file.parent,
+                    prefix="db_store_tmp_",
+                    suffix=".json",
+                    delete=False,
+                ) as tmp_file:
+                    tmp_file.write(serialized)
+                    tmp_file.flush()
+                    os.fsync(tmp_file.fileno())
+                    tmp_path = Path(tmp_file.name)
+
+                os.replace(tmp_path, data_file)
+                self._last_mtime = data_file.stat().st_mtime
+            except Exception as exc:
+                if tmp_path and tmp_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except Exception:
+                        pass
+                raise RuntimeError(f"Failed to atomically persist database to disk: {exc}") from exc
 
     def __getitem__(self, name):
         return PersistentCollection(self._db[name], lambda: self)
@@ -119,6 +186,21 @@ class PersistentClient:
 
 _client = None
 _using_mock = False
+
+
+def is_using_mock() -> bool:
+    """Return True if application is running on local persistent mock database."""
+    global _using_mock
+    return _using_mock
+
+
+def set_local_mode() -> None:
+    """Explicitly switch database client to local persistent fallback storage."""
+    global _client, _using_mock
+    import mongomock
+    raw_mock = mongomock.MongoClient()
+    _client = PersistentClient(raw_mock)
+    _using_mock = True
 
 
 def get_client():
@@ -155,32 +237,52 @@ def ensure_indexes() -> None:
     Safe to call every time the app starts - creating an index that
     already exists is a no-op in MongoDB, it won't duplicate or error.
     """
-    db = get_db()
-
-    # Exactly one user per email address.
-    db.users.create_index("email", unique=True)
-
-    # The customer chat sidebar needs "this user's conversations, newest first".
-    db.conversations.create_index([("user_id", 1), ("updated_at", -1)])
-
-    # The admin ticket dashboard needs "this user's tickets" and "tickets by status".
-    db.tickets.create_index([("user_id", 1)])
-    db.tickets.create_index([("status", 1)])
-    db.tickets.create_index("ticket_id", unique=True)
-
-    # The admin documents page needs "documents by status" (processing/indexed/failed).
-    db.documents.create_index([("status", 1)])
+    with _db_lock:
+        db = get_db()
+        _ensure_indexes_on_db(db)
 
 
 def check_connection() -> bool:
     """
-    Quick health check. Returns True if MongoDB is reachable, False
-    otherwise (and prints why). Used by test_phase1.py now, and will be
-    reused as a FastAPI startup check in Phase 2.
+    Check if REAL MongoDB is reachable. Returns False if running on mock fallback
+    or if the remote MongoDB connection fails.
     """
+    global _client, _using_mock
+    if _client is None:
+        get_client()
+    if _using_mock:
+        return False
     try:
-        get_client().admin.command("ping")
+        _client.admin.command("ping")
         return True
     except Exception as exc:
         print(f"[MongoDB] Connection check failed: {exc}")
         return False
+
+
+def get_storage_info() -> dict:
+    """
+    Return detailed health information clearly distinguishing real MongoDB
+    from local persistent fallback storage.
+    """
+    global _using_mock
+    if _client is None:
+        get_client()
+
+    if _using_mock:
+        return {
+            "status": "ok",
+            "storage_type": "local_persistent_fallback",
+            "mongodb_connected": False,
+            "persistent_fallback_active": True,
+            "details": "Using file-backed persistent local database (mongomock).",
+        }
+
+    connected = check_connection()
+    return {
+        "status": "ok" if connected else "degraded",
+        "storage_type": "mongodb",
+        "mongodb_connected": connected,
+        "persistent_fallback_active": False,
+        "details": "Connected to remote MongoDB." if connected else "Remote MongoDB unreachable.",
+    }

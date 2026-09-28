@@ -368,7 +368,36 @@ body:not(.light-theme) .entry-screen {
     flex-direction: column;
     padding: 18px 16px;
     z-index: 10;
-    transition: var(--transition);
+    transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                min-width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                padding 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.sidebar.collapsed {
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    border-right-width: 0 !important;
+    border-right-color: transparent !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    overflow: hidden !important;
+}
+
+.sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(2px);
+    z-index: 40;
+    transition: opacity 0.2s ease;
 }
 
 .brand {
@@ -772,12 +801,14 @@ body:not(.light-theme) .entry-screen {
 
 .main-content {
     flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     height: 100%;
     overflow: hidden;
     background: var(--bg-page);
     position: relative;
+    transition: all 0.25s ease;
 }
 
 .topbar {
@@ -789,15 +820,43 @@ body:not(.light-theme) .entry-screen {
     justify-content: space-between;
     padding: 0 24px;
     flex-shrink: 0;
-    z-index: 5;
+    z-index: 45;
+}
+
+.sidebar-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: var(--radius-md);
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    margin-right: 10px;
+    flex-shrink: 0;
+    transition: var(--transition);
+}
+
+.sidebar-toggle-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+
+.sidebar-toggle-btn:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 1px;
+}
+
+.sidebar-toggle-btn svg {
+    pointer-events: none;
+    display: block;
 }
 
 .mobile-menu {
     display: none;
-    font-size: 20px;
-    color: var(--text-primary);
-    padding: 6px;
-    margin-right: 8px;
 }
 
 .topbar-title {
@@ -1400,6 +1459,58 @@ form input:focus {
     text-decoration: underline;
 }
 
+.password-input-wrapper {
+    position: relative;
+    width: 100%;
+    display: block;
+}
+
+.password-input-wrapper input {
+    width: 100%;
+    display: block;
+    box-sizing: border-box;
+    padding-right: 44px !important;
+}
+
+.password-toggle-btn {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 10px;
+    margin: auto 0;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 5;
+    padding: 0;
+    color: var(--text-muted);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    line-height: 1;
+    transition: var(--transition);
+}
+
+.password-toggle-btn svg {
+    pointer-events: none;
+    display: block;
+    width: 18px;
+    height: 18px;
+}
+
+.password-toggle-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+
+.password-toggle-btn:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 1px;
+}
+
 .auth-submit {
     width: 100%;
     padding: 11px 16px;
@@ -1578,14 +1689,20 @@ form input:focus {
         bottom: 0;
         z-index: 50;
         box-shadow: var(--shadow-xl);
+        width: 280px;
+        min-width: 280px;
+        margin-left: 0 !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+        transition: left 0.25s ease;
     }
 
     .sidebar.open {
         left: 0;
     }
 
-    .mobile-menu {
-        display: block;
+    .topbar {
+        padding: 0 16px;
     }
 
     .suggestion-grid {

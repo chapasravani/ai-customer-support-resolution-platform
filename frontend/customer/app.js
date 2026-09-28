@@ -9,19 +9,36 @@
    CONFIGURATION
    ========================================================= */
 
-const API_BASE_URL = "http://127.0.0.1:8000";
+const API_BASE_URL = (
+    (typeof window !== "undefined" && (window.API_BASE_URL || window.__API_BASE__)) ||
+    (typeof localStorage !== "undefined" && localStorage.getItem("api_base_url")) ||
+    (typeof window !== "undefined" && window.location.port === "8000"
+        ? window.location.origin
+        : (typeof window !== "undefined" && window.location.hostname === "localhost"
+            ? "http://localhost:8000"
+            : "http://127.0.0.1:8000"))
+).replace(/\/+$/, "");
 
 
 /* =========================================================
    APPLICATION STATE
    ========================================================= */
 
-const state = {
-    token: localStorage.getItem("supportai_token") || null,
+const rawStoredUser = typeof localStorage !== "undefined" ? localStorage.getItem("supportai_user") : null;
+let initialUser = null;
+try {
+    initialUser = JSON.parse(rawStoredUser || "null");
+} catch {
+    initialUser = null;
+}
+if (initialUser && initialUser.role !== "customer") {
+    initialUser = null;
+}
 
-    user: JSON.parse(
-        localStorage.getItem("supportai_user") || "null"
-    ),
+const state = {
+    token: (typeof localStorage !== "undefined" && localStorage.getItem("supportai_token")) || null,
+
+    user: initialUser,
 
     conversationId:
         localStorage.getItem("supportai_conversation_id") || null,
@@ -36,6 +53,12 @@ const state = {
     conversationSearch: "",
 
     authMode: "login",
+
+    /* Responsive and desktop sidebar state */
+    sidebarCollapsed:
+        (typeof localStorage !== "undefined" && localStorage.getItem("supportai_sidebar_collapsed") === "true") || false,
+
+    sidebarMobileOpen: false,
 
     /* Pending conversation for rename/delete modal flows */
     _pendingRenameConversation: null,
@@ -52,8 +75,16 @@ const elements = {
     sidebar:
         document.getElementById("sidebar"),
 
-    mobileMenuBtn:
+    sidebarToggleBtn:
+        document.getElementById("sidebarToggleBtn") ||
         document.getElementById("mobileMenuBtn"),
+
+    mobileMenuBtn:
+        document.getElementById("sidebarToggleBtn") ||
+        document.getElementById("mobileMenuBtn"),
+
+    sidebarBackdrop:
+        document.getElementById("sidebarBackdrop"),
 
     newChatBtn:
         document.getElementById("newChatBtn"),
@@ -244,18 +275,27 @@ forgotModal:
    ========================================================= */
 
 async function fetchModelInfo() {
+    const badge = document.getElementById("headerModelBadge");
     try {
         const response = await fetch(`${API_BASE_URL}/system/model-info`);
         if (response.ok) {
             const info = await response.json();
-            const badge = document.getElementById("headerModelBadge");
             if (badge && info.display_name) {
                 badge.textContent = `● ${info.display_name}`;
                 badge.title = `Provider: ${info.provider_display} | Primary Model: ${info.model}`;
+                return;
             }
+        }
+        if (badge) {
+            badge.textContent = "● AI Model — unavailable";
+            badge.title = "AI model information is currently unavailable";
         }
     } catch (err) {
         console.warn("Could not load dynamic model info:", err);
+        if (badge) {
+            badge.textContent = "● AI Model — unavailable";
+            badge.title = "AI model information is currently unavailable";
+        }
     }
 }
 
@@ -263,33 +303,108 @@ document.addEventListener("DOMContentLoaded", () => {
 
     setupEventListeners();
 
-    updateUserUI();
-
     setupTheme();
 
     fetchModelInfo();
 
     /*
-     * If a token already exists, validate it against /auth/me.
+     * If an existing session token exists (customer or admin), validate it against /auth/me.
+     * Keep UI protected during validation to prevent UI flicker.
      */
+    const storedAdminToken = (typeof localStorage !== "undefined") ? localStorage.getItem("admin_token") : null;
 
-    if (state.token) {
-
-        hideEntryScreen();
-        closeAuthModal();
-        closeForgotModal();
+    if (state.token || storedAdminToken) {
         initializeAuthenticatedApp();
-
     } else {
-
+        updateUserUI();
         showRoleScreen();
-
     }
 
+    updateSidebarUI();
     updateMessageCounter();
     updateSendButton();
 
 });
+
+
+/* =========================================================
+   RESPONSIVE & DESKTOP SIDEBAR MANAGEMENT
+   ========================================================= */
+
+function updateSidebarUI() {
+    const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
+    const sidebar = elements.sidebar || document.getElementById("sidebar");
+    const backdrop = elements.sidebarBackdrop || document.getElementById("sidebarBackdrop");
+    const toggleBtn = elements.sidebarToggleBtn || elements.mobileMenuBtn || document.getElementById("sidebarToggleBtn");
+    const appShell = document.querySelector(".app-shell");
+
+    if (!sidebar) return;
+
+    if (isMobile) {
+        sidebar.classList.remove("collapsed");
+        if (appShell) appShell.classList.remove("sidebar-collapsed");
+
+        if (state.sidebarMobileOpen) {
+            sidebar.classList.add("open");
+            if (backdrop) backdrop.classList.remove("hidden");
+            if (toggleBtn) {
+                toggleBtn.setAttribute("aria-expanded", "true");
+                toggleBtn.setAttribute("aria-label", "Close sidebar");
+                toggleBtn.setAttribute("title", "Close sidebar");
+            }
+        } else {
+            sidebar.classList.remove("open");
+            if (backdrop) backdrop.classList.add("hidden");
+            if (toggleBtn) {
+                toggleBtn.setAttribute("aria-expanded", "false");
+                toggleBtn.setAttribute("aria-label", "Open sidebar");
+                toggleBtn.setAttribute("title", "Open sidebar");
+            }
+        }
+    } else {
+        sidebar.classList.remove("open");
+        if (backdrop) backdrop.classList.add("hidden");
+        state.sidebarMobileOpen = false;
+
+        if (state.sidebarCollapsed) {
+            sidebar.classList.add("collapsed");
+            if (appShell) appShell.classList.add("sidebar-collapsed");
+            if (toggleBtn) {
+                toggleBtn.setAttribute("aria-expanded", "false");
+                toggleBtn.setAttribute("aria-label", "Open sidebar");
+                toggleBtn.setAttribute("title", "Open sidebar");
+            }
+        } else {
+            sidebar.classList.remove("collapsed");
+            if (appShell) appShell.classList.remove("sidebar-collapsed");
+            if (toggleBtn) {
+                toggleBtn.setAttribute("aria-expanded", "true");
+                toggleBtn.setAttribute("aria-label", "Close sidebar");
+                toggleBtn.setAttribute("title", "Close sidebar");
+            }
+        }
+    }
+}
+
+function toggleSidebar() {
+    const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
+    if (isMobile) {
+        state.sidebarMobileOpen = !state.sidebarMobileOpen;
+    } else {
+        state.sidebarCollapsed = !state.sidebarCollapsed;
+        try {
+            localStorage.setItem("supportai_sidebar_collapsed", state.sidebarCollapsed ? "true" : "false");
+        } catch {}
+    }
+    updateSidebarUI();
+}
+
+function closeMobileSidebar() {
+    if (state.sidebarMobileOpen) {
+        state.sidebarMobileOpen = false;
+        updateSidebarUI();
+    }
+}
 
 
 /* =========================================================
@@ -343,6 +458,29 @@ function setupEventListeners() {
             showAuthModal();
         });
     }
+
+    function setupPasswordToggle(btnId, inputId) {
+        const btn = document.getElementById(btnId);
+        const input = document.getElementById(inputId);
+        if (!btn || !input) return;
+
+        btn.addEventListener("click", (e) => {
+            e.preventDefault();
+            const isPassword = input.type === "password";
+            input.type = isPassword ? "text" : "password";
+            btn.setAttribute("aria-label", isPassword ? "Hide password" : "Show password");
+            btn.setAttribute("title", isPassword ? "Hide password" : "Show password");
+            const eyeOpen = btn.querySelector(".eye-open");
+            const eyeClosed = btn.querySelector(".eye-closed");
+            if (eyeOpen && eyeClosed) {
+                eyeOpen.classList.toggle("hidden", isPassword);
+                eyeClosed.classList.toggle("hidden", !isPassword);
+            }
+        });
+    }
+
+    setupPasswordToggle("loginPasswordToggle", "loginPassword");
+    setupPasswordToggle("registerPasswordToggle", "registerPassword");
 
     /* Message input */
 
@@ -463,22 +601,31 @@ function setupEventListeners() {
     }
 
 
-    /* Mobile menu */
-
-    if (elements.mobileMenuBtn) {
-
-        elements.mobileMenuBtn.addEventListener(
-            "click",
-            () => {
-
-                elements.sidebar.classList.toggle(
-                    "open"
-                );
-
-            }
-        );
-
+    /* Sidebar toggle (desktop collapse & mobile drawer) */
+    const toggleBtn = elements.sidebarToggleBtn || elements.mobileMenuBtn || document.getElementById("sidebarToggleBtn");
+    if (toggleBtn) {
+        toggleBtn.addEventListener("click", (e) => {
+            e.preventDefault();
+            toggleSidebar();
+        });
     }
+
+    const backdrop = elements.sidebarBackdrop || document.getElementById("sidebarBackdrop");
+    if (backdrop) {
+        backdrop.addEventListener("click", () => {
+            closeMobileSidebar();
+        });
+    }
+
+    window.addEventListener("resize", () => {
+        updateSidebarUI();
+    });
+
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && state.sidebarMobileOpen) {
+            closeMobileSidebar();
+        }
+    });
 
 
     /* Close auth modal */
@@ -747,11 +894,11 @@ async function apiRequest(
     }
 
     if (!response.ok) {
-        if (response.status === 401 || response.status === 403) {
+        if (response.status === 401) {
             if (isAuthEndpoint) {
                 throw new Error(
-                    data.detail ||
-                    data.message ||
+                    (typeof data?.detail === "string" && data.detail) ||
+                    data?.message ||
                     "Incorrect email or password."
                 );
             }
@@ -763,10 +910,35 @@ async function apiRequest(
             );
         }
 
+        if (response.status === 403) {
+            throw new Error(
+                (typeof data?.detail === "string" && data.detail) ||
+                data?.message ||
+                "Access denied: You do not have permission to perform this action."
+            );
+        }
+
+        if (response.status === 422) {
+            let msg = "Invalid input format. Please check your data.";
+            if (Array.isArray(data?.detail) && data.detail.length > 0) {
+                msg = data.detail.map((d) => d.msg || "invalid field").join("; ");
+            } else if (typeof data?.detail === "string") {
+                msg = data.detail;
+            }
+            throw new Error(msg);
+        }
+
+        if (response.status === 503) {
+            throw new Error(
+                (typeof data?.detail === "string" && data.detail) ||
+                "Database service is temporarily unavailable. Please try again later."
+            );
+        }
+
         throw new Error(
-            data.detail ||
-            data.message ||
-            "Something went wrong."
+            (typeof data?.detail === "string" && data.detail) ||
+            data?.message ||
+            `Request failed (HTTP ${response.status}).`
         );
     }
 
@@ -910,7 +1082,7 @@ async function handleLogin(event) {
 
 
     const email =
-        elements.loginEmail.value.trim();
+        elements.loginEmail.value.trim().toLowerCase();
 
     const password =
         elements.loginPassword.value;
@@ -950,37 +1122,43 @@ async function handleLogin(event) {
 
 
         /*
-         * Save the fresh JWT.
+         * Role-based separation: If an admin logs in, save admin_token and redirect to /admin/
          */
-
-        state.token =
-            data.access_token;
-
-        localStorage.setItem(
-            "supportai_token",
-            state.token
-        );
-
+        if (data.role === "admin") {
+            if (typeof localStorage !== "undefined") {
+                localStorage.setItem("admin_token", data.access_token);
+                localStorage.removeItem("supportai_token");
+                localStorage.removeItem("supportai_user");
+            }
+            state.token = null;
+            state.user = null;
+            closeAuthModal();
+            showToast("Admin account verified. Redirecting to Admin Control Center...");
+            window.location.replace("../admin/");
+            return;
+        }
 
         /*
-         * Validate the new token and load
-         * the current user.
+         * Save the fresh customer JWT.
          */
+        state.token = data.access_token;
+        if (typeof localStorage !== "undefined") {
+            localStorage.setItem("supportai_token", state.token);
+        }
 
+        /*
+         * Validate the new token and load the current customer.
+         */
         await loadCurrentUser();
 
-
         closeAuthModal();
+        hideEntryScreen();
 
-        showToast(
-            "Welcome back!"
-        );
-
+        showToast("Welcome back!");
 
         /*
          * Load previous conversations.
          */
-
         await loadConversations();
 
 
@@ -1017,7 +1195,7 @@ async function handleRegister(event) {
         elements.registerName.value.trim();
 
     const email =
-        elements.registerEmail.value.trim();
+        elements.registerEmail.value.trim().toLowerCase();
 
     const password =
         elements.registerPassword.value;
@@ -1053,47 +1231,45 @@ async function handleRegister(event) {
 
     try {
 
-        await apiRequest(
-            "/auth/register",
-            {
-                method: "POST",
+        const data =
+            await apiRequest(
+                "/auth/register",
+                {
+                    method: "POST",
 
-                body: JSON.stringify({
+                    body: JSON.stringify({
 
-                    name,
+                        name,
 
-                    email,
+                        email,
 
-                    password,
+                        password,
 
-                    role: "customer"
+                        role: "customer"
 
-                })
-            }
-        );
-
-
-        showToast(
-            "Account created. Please sign in."
-        );
+                    })
+                }
+            );
 
 
-        /*
-         * We are currently in register mode.
-         * Setting authMode to register and toggling
-         * switches us back to login mode.
-         */
+        if (data && data.access_token) {
+            state.token = data.access_token;
+            localStorage.setItem("supportai_token", state.token);
+            await loadCurrentUser();
+            closeAuthModal();
+            showToast("Account created! Welcome to SupportAI.");
+            await loadConversations();
+            elements.messageInput?.focus();
+        } else {
+            showToast(
+                "Account created. Please sign in."
+            );
 
-        state.authMode = "register";
-
-        toggleAuthMode();
-
-
-        elements.loginEmail.value =
-            email;
-
-
-        elements.loginPassword.focus();
+            state.authMode = "register";
+            toggleAuthMode();
+            elements.loginEmail.value = email;
+            elements.loginPassword.focus();
+        }
 
     } catch (error) {
 
@@ -1118,25 +1294,25 @@ async function handleRegister(event) {
    ========================================================= */
 
 async function loadCurrentUser() {
+    const user = await apiRequest("/auth/me");
+    if (user.role === "admin") {
+        if (state.token && typeof localStorage !== "undefined") {
+            localStorage.setItem("admin_token", state.token);
+            localStorage.removeItem("supportai_token");
+            localStorage.removeItem("supportai_user");
+        }
+        state.token = null;
+        state.user = null;
+        window.location.replace("../admin/");
+        return user;
+    }
 
-    const user =
-        await apiRequest(
-            "/auth/me"
-        );
-
-
-    state.user =
-        user;
-
-
-    localStorage.setItem(
-        "supportai_user",
-        JSON.stringify(user)
-    );
-
-
+    state.user = user;
+    if (typeof localStorage !== "undefined") {
+        localStorage.setItem("supportai_user", JSON.stringify(user));
+    }
     updateUserUI();
-
+    return user;
 }
 
 
@@ -1146,54 +1322,77 @@ async function loadCurrentUser() {
    ========================================================= */
 
 async function initializeAuthenticatedApp() {
+    const tokenToVerify = state.token || (typeof localStorage !== "undefined" ? localStorage.getItem("admin_token") : null);
 
-    try {
-
-        /*
-         * Step 1:
-         * Validate saved JWT.
-         */
-
-        await loadCurrentUser();
-
-
-        /*
-         * Step 2:
-         * Load customer's previous conversations.
-         */
-
-        await loadConversations();
-
-
-        /*
-         * Step 3:
-         * If there was a previously selected
-         * conversation, restore it.
-         */
-
-        if (state.conversationId) {
-
-            await loadConversation(
-                state.conversationId
-            );
-
-        }
-
-    } catch (error) {
-
-        /*
-         * Old/expired token.
-         * Clean everything and show login.
-         */
-
-        console.warn(
-            "Existing session is no longer valid."
-        );
-
-        logout(false);
-
+    if (!tokenToVerify) {
+        showRoleScreen();
+        return;
     }
 
+    try {
+        /*
+         * Step 1: Validate session with /auth/me
+         */
+        const user = await apiRequest("/auth/me", {
+            headers: {
+                Authorization: `Bearer ${tokenToVerify}`
+            }
+        });
+
+        /*
+         * Step 2: Role-based separation
+         * If the authenticated account is an admin, redirect them immediately to /admin/
+         */
+        if (user.role === "admin") {
+            if (typeof localStorage !== "undefined") {
+                localStorage.setItem("admin_token", tokenToVerify);
+                localStorage.removeItem("supportai_token");
+                localStorage.removeItem("supportai_user");
+            }
+            state.token = null;
+            state.user = null;
+            window.location.replace("../admin/");
+            return;
+        }
+
+        if (user.role === "customer") {
+            state.token = tokenToVerify;
+            state.user = user;
+            if (typeof localStorage !== "undefined") {
+                localStorage.setItem("supportai_token", state.token);
+                localStorage.setItem("supportai_user", JSON.stringify(user));
+            }
+
+            updateUserUI();
+            hideEntryScreen();
+            closeAuthModal();
+            closeForgotModal();
+
+            /*
+             * Step 4: Load customer's previous conversations
+             */
+            await loadConversations();
+
+            if (state.conversationId) {
+                await loadConversation(state.conversationId);
+            }
+            return;
+        }
+
+        /*
+         * Unknown role fallback
+         */
+        logout(false);
+        showRoleScreen();
+
+    } catch (error) {
+        /*
+         * Old/expired token. Clean everything and show login.
+         */
+        console.warn("Existing session is no longer valid:", error);
+        logout(false);
+        showRoleScreen();
+    }
 }
 
 
@@ -1686,10 +1885,26 @@ function addMessage(
 
         likeButton.addEventListener(
             "click",
-            () => {
+            async () => {
+                const wasSelected = likeButton.classList.contains("selected");
                 likeButton.classList.toggle("selected");
                 dislikeButton.classList.remove("selected");
-                showToast("Thanks for your feedback.");
+                if (!wasSelected && state.conversationId) {
+                    try {
+                        await apiRequest("/chat/feedback", {
+                            method: "POST",
+                            body: JSON.stringify({
+                                conversation_id: state.conversationId,
+                                rating: "like",
+                            }),
+                        });
+                        showToast("Thanks for your feedback.");
+                    } catch {
+                        showToast("Thanks for your feedback.");
+                    }
+                } else {
+                    showToast("Feedback removed.");
+                }
             }
         );
 
@@ -1704,10 +1919,26 @@ function addMessage(
 
         dislikeButton.addEventListener(
             "click",
-            () => {
+            async () => {
+                const wasSelected = dislikeButton.classList.contains("selected");
                 dislikeButton.classList.toggle("selected");
                 likeButton.classList.remove("selected");
-                showToast("Thanks for your feedback.");
+                if (!wasSelected && state.conversationId) {
+                    try {
+                        await apiRequest("/chat/feedback", {
+                            method: "POST",
+                            body: JSON.stringify({
+                                conversation_id: state.conversationId,
+                                rating: "dislike",
+                            }),
+                        });
+                        showToast("Thanks for your feedback.");
+                    } catch {
+                        showToast("Thanks for your feedback.");
+                    }
+                } else {
+                    showToast("Feedback removed.");
+                }
             }
         );
 
@@ -2248,6 +2479,8 @@ async function loadConversation(
     conversationId
 ) {
 
+    closeMobileSidebar();
+
     if (!state.token) {
 
         return;
@@ -2370,8 +2603,9 @@ function renderActiveConversation() {
 
 function startNewConversation() {
 
-    state.conversationId = null;
+    closeMobileSidebar();
 
+    state.conversationId = null;
 
     localStorage.removeItem(
         "supportai_conversation_id"
@@ -2948,23 +3182,6 @@ function toggleProfileDropdown() {
 
 }
 
-
-/* =========================================================
-   MOBILE SIDEBAR
-   ========================================================= */
-
-function closeMobileSidebar() {
-
-    if (!elements.sidebar) {
-        return;
-    }
-
-
-    elements.sidebar.classList.remove(
-        "open"
-    );
-
-}
 
 
 /* =========================================================

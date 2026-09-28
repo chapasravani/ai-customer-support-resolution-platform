@@ -85,6 +85,30 @@ async def _get_or_create_session(
             user_id=user_id,
             session_id=session_id,
         )
+        # H6: Hydrate session from existing Mongo conversation history across restarts
+        try:
+            from . import models
+            convo = models.get_conversation(session_id)
+            if convo and convo.get("messages"):
+                from google.adk.events.event import Event
+                # Include past turns; exclude the newest message (already added to DB, to be run now)
+                past_turns = convo["messages"][:-1]
+                for msg in past_turns:
+                    role = msg.get("role", "user")
+                    text = msg.get("content", "")
+                    if text:
+                        adk_role = "user" if role == "user" else "model"
+                        session.events.append(
+                            Event(
+                                author=role,
+                                content=types.Content(
+                                    role=adk_role,
+                                    parts=[types.Part(text=text)],
+                                ),
+                            )
+                        )
+        except Exception as exc:
+            print(f"[SESSION HYDRATION] Notice: Could not re-hydrate session: {exc}")
 
     return session
 
@@ -97,6 +121,9 @@ async def run_support_workflow(
     user_id: str,
     session_id: str,
     message: str,
+    customer_id: str = None,
+    user_email: str = None,
+    user_role: str = "customer",
 ) -> dict:
     """
     Run one customer message through the existing ADK workflow.
@@ -119,10 +146,18 @@ async def run_support_workflow(
     # Make sure the ADK session exists
     # -----------------------------------------------------------------------
 
-    await _get_or_create_session(
+    session = await _get_or_create_session(
         user_id,
         session_id,
     )
+    if session and hasattr(session, "state"):
+        if customer_id:
+            session.state["authenticated_customer_id"] = customer_id
+            session.state["customer_id"] = customer_id
+        if user_email:
+            session.state["authenticated_user_email"] = user_email
+        if user_role:
+            session.state["authenticated_user_role"] = user_role
 
     # -----------------------------------------------------------------------
     # Convert the customer's message into an ADK Content object
@@ -219,6 +254,8 @@ async def run_support_workflow(
                             "I'm temporarily receiving a high volume of requests. "
                             "Please wait a brief moment and try again."
                         ),
+                        "success": False,
+                        "error_type": "rate_limit",
                         "escalation": {},
                         "investigation": {},
                         "resolution": {},
@@ -238,6 +275,8 @@ async def run_support_workflow(
                             "The AI service is temporarily busy. "
                             "Please wait a moment and try again."
                         ),
+                        "success": False,
+                        "error_type": "service_unavailable",
                         "escalation": {},
                         "investigation": {},
                         "resolution": {},
@@ -251,6 +290,8 @@ async def run_support_workflow(
                         "I'm currently unable to complete your request. "
                         "Please try again in a moment."
                     ),
+                    "success": False,
+                    "error_type": "workflow_failure",
                     "escalation": {},
                     "investigation": {},
                     "resolution": {},
@@ -298,6 +339,7 @@ async def run_support_workflow(
             final_text
             or "I wasn't able to generate a response. Please try again."
         ),
+        "success": True,
         "escalation": escalation,
         "investigation": investigation,
         "resolution": resolution,

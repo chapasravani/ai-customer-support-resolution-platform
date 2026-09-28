@@ -1,10 +1,33 @@
 import json
+import os
+import tempfile
 from pathlib import Path
-from mcp.server.fastmcp import FastMCP
+from threading import RLock
+from uuid import uuid4
+
+try:
+    from mcp.server.mcpserver import MCPServer as FastMCP
+except (ImportError, ModuleNotFoundError):
+    from mcp.server.fastmcp import FastMCP
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
+_mcp_lock = RLock()
 mcp = FastMCP("customer-support-enterprise")
+
+
+def _atomic_write_json(path: Path, data: dict) -> None:
+    serialized = json.dumps(data, indent=2)
+    with _mcp_lock:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=str(path.parent),
+            delete=False,
+            encoding="utf-8",
+        ) as tmp:
+            tmp.write(serialized)
+            tmp_path = tmp.name
+        os.replace(tmp_path, str(path))
 
 
 def load_json(filename: str) -> dict:
@@ -12,7 +35,8 @@ def load_json(filename: str) -> dict:
     if not path.exists():
         return {"error": f"{filename} not found"}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        with _mcp_lock:
+            return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return {"error": f"{filename} contains invalid JSON"}
 
@@ -40,11 +64,20 @@ def lookup_order_mcp(order_id: str) -> dict:
 @mcp.tool()
 def create_support_case_mcp(customer_id: str, order_id: str, issue: str) -> dict:
     """Create a mock support case in the support system."""
-    cases = load_json("support_cases.json")
-    case_id = f"MCP-CASE-{len(cases)+1:04d}"
-    cases[case_id] = {"case_id": case_id, "customer_id": customer_id, "order_id": order_id, "issue": issue, "status": "open"}
-    (DATA_DIR / "support_cases.json").write_text(json.dumps(cases, indent=2), encoding="utf-8")
-    return {"status": "created", "case_id": case_id}
+    with _mcp_lock:
+        cases = load_json("support_cases.json")
+        if "error" in cases:
+            cases = {}
+        case_id = f"MCP-CASE-{len(cases)+1:04d}-{uuid4().hex[:6].upper()}"
+        cases[case_id] = {
+            "case_id": case_id,
+            "customer_id": customer_id,
+            "order_id": order_id,
+            "issue": issue,
+            "status": "open",
+        }
+        _atomic_write_json(DATA_DIR / "support_cases.json", cases)
+        return {"status": "created", "case_id": case_id}
 
 
 if __name__ == "__main__":

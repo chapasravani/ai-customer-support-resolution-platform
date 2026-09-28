@@ -31,7 +31,7 @@ import os
 
 from fastapi.testclient import TestClient
 
-from backend import db, models
+from backend import auth, db, models
 from backend.main import app
 
 
@@ -252,7 +252,14 @@ def main() -> None:
 
     health = r.json()
 
-    assert health["mongodb_connected"] is True, r.text
+    assert health["status"] == "ok", r.text
+    assert health["storage_type"] in ("mongodb", "local_persistent_fallback"), r.text
+    if health["storage_type"] == "mongodb":
+        assert health["mongodb_connected"] is True, r.text
+        assert health["persistent_fallback_active"] is False, r.text
+    else:
+        assert health["mongodb_connected"] is False, r.text
+        assert health["persistent_fallback_active"] is True, r.text
 
     print("   OK -", health)
 
@@ -277,10 +284,10 @@ def main() -> None:
     assert r.status_code == 200, r.text
 
     # --------------------------------------------------------
-    # Register admin
+    # Register admin attempt via public API (must be rejected - C1)
     # --------------------------------------------------------
 
-    r = client.post(
+    r_admin_attempt = client.post(
         "/auth/register",
         json={
             "email": TEST_ADMIN_EMAIL,
@@ -290,10 +297,19 @@ def main() -> None:
         },
     )
 
-    assert r.status_code == 200, r.text
+    assert r_admin_attempt.status_code == 400, "Public registration must reject role=admin"
+
+    # Provision admin legitimately via backend models / admin provisioning
+    admin_hash = auth.hash_password(TEST_PASSWORD)
+    models.create_user(
+        email=TEST_ADMIN_EMAIL,
+        hashed_password=admin_hash,
+        name="Phase2 Admin",
+        role="admin",
+    )
 
     print(
-        "   OK - both accounts created."
+        "   OK - customer registered, public admin registration blocked (400), admin provisioned via backend."
     )
 
     # --------------------------------------------------------

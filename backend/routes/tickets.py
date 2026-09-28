@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 
 from .. import models
-from ..api_schemas import TicketStatusUpdate
+from ..api_schemas import TicketStatus, TicketStatusUpdate
 from ..deps import get_current_user, require_admin
 
 router = APIRouter(prefix="/tickets", tags=["tickets"])
@@ -25,6 +25,12 @@ def _serialize(t: dict) -> dict:
 
 @router.get("")
 def list_tickets(status: Optional[str] = None, user: dict = Depends(get_current_user)):
+    # Validate filter status if provided (M1)
+    if status is not None and status.strip() != "":
+        valid_statuses = {s.value for s in TicketStatus}
+        if status not in valid_statuses:
+            raise HTTPException(400, f"Invalid ticket status '{status}'. Valid statuses: {sorted(valid_statuses)}")
+
     # Admins see every ticket; customers see only their own.
     if user.get("role") == "admin":
         tickets = models.list_tickets(status=status)
@@ -49,9 +55,10 @@ def update_ticket(
     payload: TicketStatusUpdate,
     admin: dict = Depends(require_admin),
 ):
+    status_val = payload.status.value if hasattr(payload.status, "value") else str(payload.status)
     updated = models.update_ticket_status(
-        ticket_id, payload.status, payload.resolution_summary or ""
+        ticket_id, status_val, payload.resolution_summary or ""
     )
     if not updated:
-        raise HTTPException(404, "Ticket not found, or nothing changed.")
+        raise HTTPException(404, "Ticket not found.")
     return _serialize(models.get_ticket(ticket_id))

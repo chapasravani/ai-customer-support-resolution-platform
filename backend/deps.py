@@ -37,3 +37,11 @@ def require_admin(user: dict = Depends(get_current_user)) -> dict:
             status.HTTP_403_FORBIDDEN, "Admin access required."
         )
     return user
+
+
+def require_customer(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") != "customer":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Customer access required."
+        )
+    return user

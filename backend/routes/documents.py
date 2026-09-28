@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -12,6 +14,8 @@ from ..rag.retriever import (
 )
 
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(
     prefix="/admin/documents",
     tags=["documents"],
@@ -19,6 +23,7 @@ router = APIRouter(
 
 
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf"}
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB limit
 
 
 def _serialize(d: dict) -> dict:
@@ -52,6 +57,21 @@ async def upload_document(
             ),
         )
 
+    # Read uploaded file.
+    file_bytes = await file.read()
+
+    if not file_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail="The uploaded file is empty.",
+        )
+
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail="File size exceeds the 10MB limit.",
+        )
+
     # Create MongoDB document record first.
     doc = models.create_document_record(
         filename=filename,
@@ -62,12 +82,6 @@ async def upload_document(
     temp_path = None
 
     try:
-        # Read uploaded file.
-        file_bytes = await file.read()
-
-        if not file_bytes:
-            raise ValueError("The uploaded file is empty.")
-
         # Save temporarily so the RAG ingestion code
         # can process PDF/TXT/MD files.
         with NamedTemporaryFile(
@@ -77,16 +91,17 @@ async def upload_document(
             temp_file.write(file_bytes)
             temp_path = temp_file.name
 
-        # Extract text and create chunks.
-        chunks = prepare_document(temp_path)
+        # Extract text and create chunks off the event loop.
+        chunks = await asyncio.to_thread(prepare_document, temp_path)
 
         if not chunks:
             raise ValueError(
                 "No readable text was found in the uploaded document."
             )
 
-        # Generate embeddings and store chunks in ChromaDB.
-        chunk_count = add_document_chunks(
+        # Generate embeddings and store chunks in ChromaDB off the event loop.
+        chunk_count = await asyncio.to_thread(
+            add_document_chunks,
             chunks=chunks,
             source=filename,
         )
@@ -103,16 +118,32 @@ async def upload_document(
 
         return _serialize(updated_doc or doc)
 
-    except Exception as exc:
-        # Mark document as failed if processing fails.
+    except ValueError as exc:
         models.update_document_status(
             document_id=document_id,
             status="failed",
         )
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        )
 
+    except HTTPException:
+        models.update_document_status(
+            document_id=document_id,
+            status="failed",
+        )
+        raise
+
+    except Exception as exc:
+        logger.exception("Document processing failed: %s", exc)
+        models.update_document_status(
+            document_id=document_id,
+            status="failed",
+        )
         raise HTTPException(
             status_code=500,
-            detail=f"Document processing failed: {exc}",
+            detail="Document processing failed due to an internal server error.",
         )
 
     finally:

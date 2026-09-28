@@ -20,11 +20,15 @@ from backend import db, models
 
 
 def main() -> None:
-    print("1. Checking MongoDB connection...")
-    if not db.check_connection():
+    print("1. Checking database connection...")
+    info = db.get_storage_info()
+    if not (info.get("mongodb_connected") or info.get("persistent_fallback_active")):
         print("   FAILED - is MongoDB running? Is MONGODB_URI correct?")
         return
-    print("   OK - connected.")
+    if info.get("persistent_fallback_active"):
+        print("   OK - operating with local persistent fallback storage.")
+    else:
+        print("   OK - connected to MongoDB.")
 
     print("2. Creating indexes...")
     db.ensure_indexes()

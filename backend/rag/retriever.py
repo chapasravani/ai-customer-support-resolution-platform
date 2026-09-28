@@ -7,14 +7,13 @@ Phase 5:
 - Retrieve the most relevant chunks for a user query
 """
 
+import hashlib
 import os
 from pathlib import Path
 from typing import List, Dict
 
 import chromadb
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
 
 
 # -------------------------------------------------------------------
@@ -30,15 +29,6 @@ load_dotenv(BACKEND_DIR / ".env")
 # Configuration
 # -------------------------------------------------------------------
 
-# Gemini embedding model.
-#
-# 768 dimensions are used for the ChromaDB vectors.
-#
-# IMPORTANT:
-# The previous OpenRouter/OpenAI embeddings cannot be mixed
-# with Gemini embeddings. The existing RAG index will need
-# to be rebuilt after migration.
-
 EMBEDDING_MODEL = "gemini-embedding-001"
 EMBEDDING_DIMENSION = 768
 
@@ -48,49 +38,55 @@ COLLECTION_NAME = "support_documents"
 
 
 # -------------------------------------------------------------------
-# Gemini client
+# Lazy Clients & Collection (H3)
 # -------------------------------------------------------------------
 
-provider = os.getenv("PROVIDER", "gemini").lower()
-
-if provider != "gemini":
-    raise RuntimeError(
-        "RAG embeddings are configured for Gemini. "
-        "Set PROVIDER=gemini in backend/.env"
-    )
+_gemini_client = None
+_chroma_client = None
+_collection = None
 
 
-google_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("API_KEY")
+def get_gemini_client():
+    """Lazily initialize Gemini client only when embedding operations are called (H3)."""
+    global _gemini_client
+    if _gemini_client is not None:
+        return _gemini_client
 
-if not google_api_key:
-    raise RuntimeError(
-        "GOOGLE_API_KEY or API_KEY is not configured "
-        "in backend/.env"
-    )
+    from google import genai
 
-
-gemini_client = genai.Client(
-    api_key=google_api_key
-)
-
-
-# -------------------------------------------------------------------
-# Chroma client
-# -------------------------------------------------------------------
-
-chroma_client = chromadb.PersistentClient(
-    path=str(CHROMA_DIR)
-)
-
-
-collection = chroma_client.get_or_create_collection(
-    name=COLLECTION_NAME,
-    metadata={
-        "description": (
-            "Customer support policy and knowledge documents"
+    provider = os.getenv("PROVIDER", "gemini").lower()
+    if provider != "gemini":
+        raise RuntimeError(
+            "RAG embeddings are configured for Gemini. "
+            "Set PROVIDER=gemini in backend/.env"
         )
-    },
-)
+
+    google_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("API_KEY")
+    if not google_api_key:
+        raise RuntimeError(
+            "GOOGLE_API_KEY or API_KEY is not configured in backend/.env"
+        )
+
+    _gemini_client = genai.Client(api_key=google_api_key)
+    return _gemini_client
+
+
+def get_chroma_collection():
+    """Lazily initialize ChromaDB collection only when vector store operations are called (H3)."""
+    global _chroma_client, _collection
+    if _collection is not None:
+        return _collection
+
+    if _chroma_client is None:
+        _chroma_client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+
+    _collection = _chroma_client.get_or_create_collection(
+        name=COLLECTION_NAME,
+        metadata={
+            "description": "Customer support policy and knowledge documents"
+        },
+    )
+    return _collection
 
 
 # -------------------------------------------------------------------
@@ -103,11 +99,13 @@ def embed_documents(
     """
     Generate embeddings for document chunks using Gemini.
     """
-
     if not texts:
         return []
 
-    response = gemini_client.models.embed_content(
+    client = get_gemini_client()
+    from google.genai import types
+
+    response = client.models.embed_content(
         model=EMBEDDING_MODEL,
         contents=texts,
         config=types.EmbedContentConfig(
@@ -126,14 +124,15 @@ def embed_query(
     query: str,
 ) -> List[float]:
     """
-    Generate an embedding for a user's search query
-    using Gemini.
+    Generate an embedding for a user's search query using Gemini.
     """
-
     if not query.strip():
         return []
 
-    response = gemini_client.models.embed_content(
+    client = get_gemini_client()
+    from google.genai import types
+
+    response = client.models.embed_content(
         model=EMBEDDING_MODEL,
         contents=query,
         config=types.EmbedContentConfig(
@@ -155,16 +154,17 @@ def add_document_chunks(
 ) -> int:
     """
     Embed and store document chunks in ChromaDB.
+    Uses collision-resistant IDs combining stem, index, and content hash (H2).
     """
-
     if not chunks:
         return 0
 
     embeddings = embed_documents(chunks)
 
+    clean_stem = Path(source).stem[:24]
     ids = [
-        f"{Path(source).stem}_{index}"
-        for index in range(len(chunks))
+        f"{clean_stem}_{index}_{hashlib.sha256(f'{source}:{index}:{chunk}'.encode('utf-8')).hexdigest()[:12]}"
+        for index, chunk in enumerate(chunks)
     ]
 
     metadatas = [
@@ -175,7 +175,8 @@ def add_document_chunks(
         for index in range(len(chunks))
     ]
 
-    collection.upsert(
+    col = get_chroma_collection()
+    col.upsert(
         ids=ids,
         documents=chunks,
         embeddings=embeddings,
@@ -195,60 +196,46 @@ def search_documents(
 ) -> List[Dict]:
     """
     Retrieve the most relevant document chunks for a user query.
+    Safe against missing configuration or retrieval errors (H3).
     """
-
     if not query.strip():
         return []
 
-    query_embedding = embed_query(query)
+    try:
+        col = get_chroma_collection()
+        document_count = col.count()
+        if document_count == 0:
+            return []
 
-    if not query_embedding:
-        return []
+        query_embedding = embed_query(query)
+        if not query_embedding:
+            return []
 
-    document_count = collection.count()
-
-    if document_count == 0:
-        return []
-
-    top_k = min(top_k, document_count)
-
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=top_k,
-    )
-
-    documents = results.get(
-        "documents",
-        [[]],
-    )[0]
-
-    metadatas = results.get(
-        "metadatas",
-        [[]],
-    )[0]
-
-    distances = results.get(
-        "distances",
-        [[]],
-    )[0]
-
-    retrieved = []
-
-    for document, metadata, distance in zip(
-        documents,
-        metadatas,
-        distances,
-    ):
-        retrieved.append(
-            {
-                "content": document,
-                "source": metadata.get("source"),
-                "chunk_index": metadata.get("chunk_index"),
-                "distance": distance,
-            }
+        top_k = min(top_k, document_count)
+        results = col.query(
+            query_embeddings=[query_embedding],
+            n_results=top_k,
         )
 
-    return retrieved
+        documents = results.get("documents", [[]])[0]
+        metadatas = results.get("metadatas", [[]])[0]
+        distances = results.get("distances", [[]])[0]
+
+        retrieved = []
+        for document, metadata, distance in zip(documents, metadatas, distances):
+            retrieved.append(
+                {
+                    "content": document,
+                    "source": metadata.get("source"),
+                    "chunk_index": metadata.get("chunk_index"),
+                    "distance": distance,
+                }
+            )
+
+        return retrieved
+    except Exception as exc:
+        print(f"[RAG WARNING] Search failed or RAG unavailable: {exc}")
+        return []
 
 
 # -------------------------------------------------------------------
@@ -259,8 +246,11 @@ def collection_count() -> int:
     """
     Return the number of chunks currently stored.
     """
-
-    return collection.count()
+    try:
+        return get_chroma_collection().count()
+    except Exception as exc:
+        print(f"[RAG WARNING] Could not get collection count: {exc}")
+        return 0
 
 
 # -------------------------------------------------------------------
@@ -273,26 +263,17 @@ def delete_document_chunks(
     """
     Delete all ChromaDB chunks belonging to a document source.
     """
-
     if not source:
         return 0
 
-    results = collection.get(
-        where={
-            "source": source
-        }
-    )
-
-    ids = results.get(
-        "ids",
-        [],
-    )
-
-    if not ids:
+    try:
+        col = get_chroma_collection()
+        results = col.get(where={"source": source})
+        ids = results.get("ids", [])
+        if not ids:
+            return 0
+        col.delete(ids=ids)
+        return len(ids)
+    except Exception as exc:
+        print(f"[RAG WARNING] Could not delete document chunks for '{source}': {exc}")
         return 0
-
-    collection.delete(
-        ids=ids
-    )
-
-    return len(ids)

@@ -124,40 +124,142 @@ Customer → Support Manager → parallel Customer/Order/Knowledge research → 
 - `LongRunningFunctionTool`
 - Human escalation / case handoff
 
-## Setup
+## Setup & Installation
+
+1. Create and activate a Python 3.12 virtual environment:
 
 ```powershell
-python -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-copy .env.example .env
 ```
 
-Put your Gemini API key in `.env`. Never commit `.env`.
-
-## Run ADK Web
-
-From the parent directory:
+2. Install dependencies for both the multi-agent system and the backend:
 
 ```powershell
-adk web customer_support
+pip install -r final_customer_support/requirements.txt -r backend/requirements.txt
 ```
 
-## MCP demo
+> **Note on mongomock**: `mongomock==4.3.0` is included in `backend/requirements.txt`. It powers the file-backed persistent local fallback database when a live MongoDB instance is not connected.
 
-Set `ENABLE_MCP=true` in `.env`, then run ADK Web. The agent can use the local stdio MCP server.
-
-## OpenAPI demo
-
-Start the mock API in another terminal:
+3. Configure environment variables:
 
 ```powershell
-uvicorn customer_support.openapi_server:app --port 8001
+copy backend\.env.example backend\.env
+copy final_customer_support\.env.example final_customer_support\.env
 ```
 
-Then set `ENABLE_OPENAPI=true` and restart ADK Web.
+Ensure your `GOOGLE_API_KEY` is placed in `backend/.env` (and `final_customer_support/.env` if testing agents directly). Never commit `.env` files.
 
-## Example scenarios
+---
+
+## Storage & Reliability Architecture
+
+### Persistent Local Fallback Database
+- **Automatic Fallback**: If a connection to `MONGODB_URI` cannot be established within 2.5s, the system automatically falls back to a file-backed persistent local database (`backend/data/db_store.json`) powered by `mongomock`.
+- **Atomic Writes**: Writes to `db_store.json` use a safe `tempfile` + `os.replace` strategy to guarantee disk integrity without partial write corruption.
+- **Thread Safety**: All reads, writes, and sync operations in `backend/db.py` are guarded by a re-entrant lock (`threading.RLock()`).
+- **Index Preservation**: Collection drops during disk reload automatically re-apply unique indexes on `users.email` and `tickets.ticket_id`.
+
+---
+
+## System Endpoints
+
+### 1. Storage Health (`GET /health`)
+Clearly distinguishes between live MongoDB connections and the local persistent fallback store:
+
+```json
+{
+  "status": "ok",
+  "storage_type": "local_persistent_fallback",
+  "mongodb_connected": false,
+  "persistent_fallback_active": true,
+  "details": "Using file-backed persistent local database (mongomock)."
+}
+```
+
+When connected to live MongoDB:
+```json
+{
+  "status": "ok",
+  "storage_type": "mongodb",
+  "mongodb_connected": true,
+  "persistent_fallback_active": false,
+  "details": "Connected to remote MongoDB."
+}
+```
+
+### 2. Active Model Info (`GET /system/model-info`)
+Provides dynamic AI model branding and metadata for frontend badges:
+
+```json
+{
+  "provider": "gemini",
+  "provider_display": "Google Gemini",
+  "model": "gemini-3.5-flash-lite",
+  "fallback_model": "gemini-3.1-flash-lite",
+  "display_name": "Google Gemini — gemini-3.5-flash-lite"
+}
+```
+If `/system/model-info` is unreachable, the customer UI model badge defaults to a neutral status: `● AI Model — unavailable`.
+
+---
+
+## Complete System Startup Instructions
+
+### Step 1: Start the Backend API
+From the repository root (`final_customer_support_project`):
+
+```powershell
+py -3.12 -m uvicorn backend.main:app --reload --port 8000
+```
+
+The API will be available at `http://127.0.0.1:8000` (docs at `http://127.0.0.1:8000/docs`).
+
+### Step 2: Open Customer Frontend
+Open `frontend/customer/index.html` in your web browser, or serve with a local server:
+
+```powershell
+py -3.12 -m http.server 3000 --directory frontend/customer
+```
+Navigate to `http://127.0.0.1:3000`.
+
+### Step 3: Open Admin Console
+Open `frontend/admin/index.html` in your web browser, or serve with a local server:
+
+```powershell
+py -3.12 -m http.server 3001 --directory frontend/admin
+```
+Navigate to `http://127.0.0.1:3001`.
+
+### Step 4: Provision Admin Account
+Use the admin management CLI:
+
+```powershell
+py -3.12 -m backend.manage_admin create --email admin@supportai.com --password AdminPassword123! --name "Support Admin"
+```
+
+---
+
+## Running Verification Tests
+
+```powershell
+# Run all tests using pytest
+py -3.12 -m pytest
+
+# Or run individual phase test suites:
+py -3.12 -m backend.test_phase1                   # Phase 1: Database & Fallback Store Sanity
+py -3.12 -m backend.test_phase2                   # Phase 2: Full API, Auth, Documents & Tickets
+py -3.12 -m backend.test_phase3_security          # Phase 3: Critical Security (C1, C2, C7)
+py -3.12 -m backend.test_phase4_business_actions  # Phase 4: Business Action Safety (C3–C6)
+py -3.12 -m backend.test_phase5_reliability       # Phase 5: High Priority Reliability (H1–H6)
+py -3.12 -m backend.test_phase6_medium            # Phase 6: Medium Priority Hardening (M1–M9)
+py -3.12 -m backend.test_phase7_low               # Phase 7: Low Priority & Maintainability (L1–L6)
+
+# Business Action core unit tests:
+py -3.12 -m pytest final_customer_support/tests/test_business_actions.py
+```
+
+## Example Scenarios
 
 1. `My order ORD123 is delayed. What can I do?`
 2. `My order ORD124 arrived damaged and I want a replacement.`
@@ -166,6 +268,6 @@ Then set `ENABLE_OPENAPI=true` and restart ADK Web.
 5. `My order ORD125 arrived damaged. I want a refund.`
 6. `I have a problem with my order.`
 
-## Safety model
+## Safety Model
 
-Business actions are mock/local only. They validate order state and policy, are idempotent where appropriate, and high-value refunds are routed for human approval.
+Business actions validate order state and policy, are idempotent where appropriate, and high-value refunds are routed for human approval.
