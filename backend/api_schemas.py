@@ -23,7 +23,7 @@ class TicketStatus(str, Enum):
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=10)
     name: str
     role: Optional[str] = "customer"
 
@@ -50,11 +50,20 @@ class UserResponse(BaseModel):
 class ChatMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     conversation_id: Optional[str] = None
+    request_id: Optional[str] = None
 
 
 class ChatMessageResponse(BaseModel):
     conversation_id: str
     response: str
+    error: Optional[bool] = None
+    error_type: Optional[str] = None
+    deduplicated: Optional[bool] = None
+
+
+class ActionReviewRequest(BaseModel):
+    status: str = Field(..., pattern="^(approved|rejected)$")
+    reason: Optional[str] = ""
 
 
 class ConversationUpdateRequest(BaseModel):
@@ -85,4 +94,5 @@ class HealthResponse(BaseModel):
     storage_type: str
     mongodb_connected: bool
     persistent_fallback_active: bool
+    rag: str
     details: Optional[str] = None

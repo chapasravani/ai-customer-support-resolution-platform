@@ -13,13 +13,12 @@ from typing import Dict
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from final_customer_support.agent import DEFAULT_FALLBACK_MODEL, DEFAULT_PRIMARY_MODEL
 
-from . import db
+from . import auth as auth_lib, db
 from .api_schemas import HealthResponse, ModelInfoResponse
-from .routes import auth, chat, documents, tickets
-
-DEFAULT_PRIMARY_MODEL = "gemini-3.5-flash-lite"
-DEFAULT_FALLBACK_MODEL = "gemini-3.1-flash-lite"
+from .rag.retriever import collection_count
+from .routes import admin, auth, chat, documents, tickets
 
 PROVIDER_NAMES: Dict[str, str] = {
     "gemini": "Google Gemini",
@@ -32,6 +31,8 @@ PROVIDER_NAMES: Dict[str, str] = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # C7: Validate JWT secret at startup (fails fast if unset, too short, or placeholder)
+    auth_lib.get_jwt_secret()
     # Ensure indexes on startup
     db.ensure_indexes()
     yield
@@ -71,7 +72,9 @@ app.add_middleware(
 @app.get("/health", response_model=HealthResponse)
 def health() -> dict:
     """Return system health and storage status, clearly distinguishing MongoDB from local fallback."""
-    return db.get_storage_info()
+    status = db.get_storage_info()
+    status["rag"] = "unavailable" if collection_count() is None else "available"
+    return status
 
 
 @app.get("/system/model-info", response_model=ModelInfoResponse)
@@ -101,3 +104,4 @@ app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(tickets.router)
 app.include_router(documents.router)
+app.include_router(admin.router)

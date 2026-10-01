@@ -18,8 +18,7 @@ email-validator==2.2.0
 
 # RAG and Document Ingestion
 chromadb==1.5.9
-pdfplumber==0.11.10
-python-docx==1.2.0
+pypdf==6.19.0
 
 # Testing
 httpx==0.28.1

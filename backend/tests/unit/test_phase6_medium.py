@@ -4,7 +4,7 @@ Phase 6 verification test suite — Medium Priority Issues (M1–M9).
 How to run:
     py -3.12 -m backend.test_phase6_medium
 or:
-    pytest backend/test_phase6_medium.py
+    pytest backend/tests/unit/test_phase6_medium.py
 
 What it tests:
     1. M1 — Ticket status validation (TicketStatus enum, 422 on invalid status).
@@ -12,7 +12,7 @@ What it tests:
     3. M3 — Chat request protection (message max_length=4000, 30 req/min rate limit with 429).
     4. M4 — Document upload reliability (empty file check 400, >10MB limit 413, controlled error handling).
     5. M5 — RAG document untrusted boundaries (UNTRUSTED_DOCUMENT wrappers & security disclaimer).
-    6. M6 — Support cases atomic save in MCP and OpenAPI servers (tempfile + os.replace).
+    6. M6 — Corrupt JSON data raises and is left unchanged.
     7. M7 — Pinned dependencies across backend and agent requirements files.
     8. M8 — Root pytest.ini test configuration.
     9. M9 — Frontend auth error handling (401 triggers logout, 403 shows error without logout).
@@ -189,39 +189,21 @@ def test_m5_rag_untrusted_boundaries():
 # M6 — Support cases atomic save in MCP and OpenAPI servers
 # ============================================================================
 
-def test_m6_support_cases_atomic_save():
-    print("Testing M6 — Support cases atomic save...")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_path = Path(tmpdir)
-        cases_file = tmp_path / "support_cases.json"
-        cases_file.write_text("{}", encoding="utf-8")
+def test_m6_corrupt_json_fails_closed(tmp_path, monkeypatch):
+    from final_customer_support import agent
+    from final_customer_support.tools import business_actions
 
-        # Test MCP server atomic write
-        from final_customer_support import mcp_server
-        with patch.object(mcp_server, "DATA_DIR", tmp_path):
-            res_mcp = mcp_server.create_support_case_mcp("CUST-100", "ORD-200", "Screen cracked")
-            assert res_mcp["status"] == "created"
-            assert "case_id" in res_mcp
-
-            saved_mcp = json.loads(cases_file.read_text(encoding="utf-8"))
-            assert res_mcp["case_id"] in saved_mcp
-            assert saved_mcp[res_mcp["case_id"]]["issue"] == "Screen cracked"
-
-        # Test OpenAPI server atomic write
-        from final_customer_support import openapi_server
-        with patch.object(openapi_server, "DATA", tmp_path):
-            res_api = openapi_server.support_case({
-                "customer_id": "CUST-300",
-                "order_id": "ORD-400",
-                "issue": "Item never arrived",
-            })
-            assert res_api["status"] == "open"
-            assert res_api["customer_id"] == "CUST-300"
-
-            saved_api = json.loads(cases_file.read_text(encoding="utf-8"))
-            assert res_api["case_id"] in saved_api
-            assert saved_api[res_api["case_id"]]["customer_id"] == "CUST-300"
-    print("  [OK] MCP and OpenAPI support cases atomic writes verified.")
+    malformed = "{not valid json"
+    path = tmp_path / "orders.json"
+    path.write_text(malformed, encoding="utf-8")
+    monkeypatch.setattr(agent, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(business_actions, "DATA", tmp_path)
+    with pytest.raises(ValueError, match="invalid JSON"):
+        agent.load_json("orders.json")
+    with pytest.raises(ValueError, match="Failed to parse"):
+        business_actions._load("orders.json")
+    assert path.read_text(encoding="utf-8") == malformed
+    print("  [OK] Corrupt JSON raises without overwriting the source file.")
 
 
 # ============================================================================
@@ -236,14 +218,15 @@ def test_m7_production_dependencies():
     # Backend requirements
     required_backend = [
         "chromadb==1.5.9",
-        "pdfplumber==0.11.10",
-        "python-docx==1.2.0",
+        "pypdf==6.19.0",
         "pytest==9.1.1",
         "pytest-asyncio==1.4.0",
         "mongomock==4.3.0",
     ]
     for req in required_backend:
         assert req in backend_reqs, f"Missing {req} in backend/requirements.txt"
+    assert "pdfplumber" not in backend_reqs, "pdfplumber should have been removed per M7"
+    assert "python-docx" not in backend_reqs, "python-docx should have been removed per M7"
 
     # Agent requirements
     required_agent = [
@@ -251,12 +234,12 @@ def test_m7_production_dependencies():
         "google-genai==2.23.0",
         "fastapi==0.141.1",
         "pydantic==2.13.5",
-        "mcp==2.2.0",
         "python-dotenv==1.1.1",
         "uvicorn==0.53.0",
     ]
     for req in required_agent:
         assert req in agent_reqs, f"Missing {req} in final_customer_support/requirements.txt"
+    assert "mcp==" not in agent_reqs
     print("  [OK] All production and test dependencies pinned and synchronized.")
 
 
@@ -309,7 +292,7 @@ if __name__ == "__main__":
     test_m3_chat_request_protection()
     test_m4_document_upload_reliability()
     test_m5_rag_untrusted_boundaries()
-    test_m6_support_cases_atomic_save()
+    test_m6_corrupt_json_fails_closed(Path(tempfile.mkdtemp()), pytest.MonkeyPatch())
     test_m7_production_dependencies()
     test_m8_pytest_configuration()
     test_m9_frontend_auth_error_handling()

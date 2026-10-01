@@ -1,4 +1,5 @@
 import time
+import re
 from collections import defaultdict
 from threading import Lock
 from uuid import uuid4
@@ -117,6 +118,7 @@ async def send_message(
     # Find existing conversation or create a new one
     # -----------------------------------------------------------------------
 
+    conversation = None
     if payload.conversation_id:
         conversation = models.get_conversation(payload.conversation_id)
 
@@ -129,167 +131,208 @@ async def send_message(
                 "Conversation not found.",
             )
 
-    else:
-        conversation = models.create_conversation(user_id)
+    request_record = None
+    request_state = ""
+    if payload.request_id:
+        request_state, request_record = models.claim_chat_request(
+            user_id, payload.request_id, payload.conversation_id or ""
+        )
+        if request_state == "done":
+            return {
+                "conversation_id": request_record.get("conversation_id", ""),
+                "response": request_record.get("response", ""),
+                "deduplicated": True,
+            }
+        if request_state == "in_progress":
+            raise HTTPException(status_code=409, detail="request in progress")
 
-    conversation_id = str(conversation["_id"])
+    conversation_id = payload.conversation_id or ""
+    user_message = None
+    try:
+        if conversation is None and request_record and request_record.get("conversation_id"):
+            conversation = models.get_conversation(request_record["conversation_id"])
+        if conversation is None:
+            conversation = models.create_conversation(user_id)
+        conversation_id = str(conversation["_id"])
+        if payload.request_id:
+            models.update_chat_request(user_id, payload.request_id, "in_progress", conversation_id=conversation_id)
 
-    # -----------------------------------------------------------------------
-    # Save customer's message
-    # -----------------------------------------------------------------------
+        # -----------------------------------------------------------------------
+        # Save customer's message
+        # -----------------------------------------------------------------------
 
-    models.add_message(
-        conversation_id,
-        "user",
-        payload.message,
-    )
+        user_message = None
+        if payload.request_id and request_state == "retry":
+            user_message = next(
+                (m for m in conversation.get("messages", []) if m.get("request_id") == payload.request_id),
+                None,
+            )
+        if user_message is None:
+            user_message = models.add_message(
+                conversation_id,
+                "user",
+                payload.message,
+                request_id=payload.request_id or "",
+            )
 
-    # -----------------------------------------------------------------------
-    # Run the existing ADK customer-support workflow
-    # -----------------------------------------------------------------------
+        # -----------------------------------------------------------------------
+        # Run the existing ADK customer-support workflow
+        # -----------------------------------------------------------------------
 
-    customer_id = models.get_customer_id_for_user(user)
-    user_email = user.get("email", "")
-    user_role = user.get("role", "customer")
+        customer_id = models.get_customer_id_for_user(user)
+        user_email = user.get("email", "")
+        user_role = user.get("role", "customer")
 
-    workflow_result = await run_support_workflow(
-        user_id=user_id,
-        session_id=conversation_id,
-        message=payload.message,
-        customer_id=customer_id,
-        user_email=user_email,
-        user_role=user_role,
-    )
+        try:
+            workflow_result = await run_support_workflow(
+                user_id=user_id,
+                session_id=conversation_id,
+                message=payload.message,
+                customer_id=customer_id,
+                user_email=user_email,
+                user_role=user_role,
+            )
+        except Exception as exc:
+            if user_message:
+                models.set_message_failed(conversation_id, user_message["id"], True)
+            if payload.request_id:
+                models.update_chat_request(user_id, payload.request_id, "failed", conversation_id=conversation_id)
+            raise HTTPException(status_code=503, detail="The support workflow failed. Please retry this request.") from exc
 
-    # -----------------------------------------------------------------------
-    # Extract the final customer-facing response
-    # -----------------------------------------------------------------------
+        # -----------------------------------------------------------------------
+        # Extract the final customer-facing response
+        # -----------------------------------------------------------------------
 
-    response_text = workflow_result.get(
-        "response",
-        "I wasn't able to generate a response. Please try again.",
-    )
-
-    # -----------------------------------------------------------------------
-    # Extract workflow information
-    #
-    # These values were produced by the ADK agents and stored in
-    # the ADK session state.
-    # -----------------------------------------------------------------------
-
-    escalation = workflow_result.get(
-        "escalation",
-        {},
-    )
-
-    investigation = workflow_result.get(
-        "investigation",
-        {},
-    )
-
-    resolution = workflow_result.get(
-        "resolution",
-        {},
-    )
-
-    order_id = workflow_result.get(
-        "order_id",
-        "",
-    )
-
-    issue_type = workflow_result.get(
-        "issue_type",
-        "",
-    )
-
-    # -----------------------------------------------------------------------
-    # H5: Do not store a failed workflow as if it were a successful assistant response
-    # -----------------------------------------------------------------------
-
-    is_workflow_success = workflow_result.get("success", True)
-    if not is_workflow_success:
-        return {
-            "conversation_id": conversation_id,
-            "response": response_text,
-            "error": workflow_result.get("error_type", "workflow_failure"),
-        }
-
-    # -----------------------------------------------------------------------
-    # Create or update support case if the ADK workflow requires escalation
-    # -----------------------------------------------------------------------
-
-    if _is_escalation_required(escalation):
-
-        # Get the reason provided by the escalation agent.
-        escalation_reason = _get_escalation_reason(
-            escalation
+        response_text = workflow_result.get(
+            "response",
+            "I wasn't able to generate a response. Please try again.",
         )
 
-        # Use the most useful issue description available.
-        issue = (
-            escalation_reason
-            or issue_type
-            or payload.message
+        # -----------------------------------------------------------------------
+        # Extract workflow information
+        #
+        # These values were produced by the ADK agents and stored in
+        # the ADK session state.
+        # -----------------------------------------------------------------------
+
+        escalation = workflow_result.get(
+            "escalation",
+            {},
         )
 
-        # H1: Prefer one support ticket per conversation
-        existing_ticket = models.get_ticket_for_conversation(conversation_id)
+        investigation = workflow_result.get(
+            "investigation",
+            {},
+        )
 
-        if existing_ticket:
-            case_id = existing_ticket.get("ticket_id")
-            try:
-                models.update_ticket_issue(case_id, issue, order_id=order_id)
-                print(f"[ESCALATION] Reused existing ticket for conversation: {case_id}")
-            except Exception as exc:
-                print(f"[ESCALATION ERROR] Could not update existing support case: {exc}")
-        else:
-            ticket_creation_failed = False
-            case_id = (
-                escalation.get("case_id")
-                if isinstance(escalation.get("case_id"), str) and escalation.get("case_id").startswith("CASE-")
-                else ("CASE-" + uuid4().hex[:8].upper())
+        resolution = workflow_result.get(
+            "resolution",
+            {},
+        )
+
+        order_id = workflow_result.get(
+            "order_id",
+            "",
+        )
+
+        issue_type = workflow_result.get(
+            "issue_type",
+            "",
+        )
+
+        # -----------------------------------------------------------------------
+        # H5: Do not store a failed workflow as if it were a successful assistant response
+        # -----------------------------------------------------------------------
+
+        is_workflow_success = workflow_result.get("success", True)
+        if not is_workflow_success:
+            if user_message:
+                models.set_message_failed(conversation_id, user_message["id"], True)
+            if payload.request_id:
+                models.update_chat_request(user_id, payload.request_id, "failed", conversation_id=conversation_id)
+            return {
+                "conversation_id": conversation_id,
+                "response": response_text,
+                "error": workflow_result.get("error_type", "workflow_failure"),
+                "error_type": workflow_result.get("error_type", "workflow_failure"),
+            }
+
+        # -----------------------------------------------------------------------
+        # Create or update support case if the ADK workflow requires escalation
+        # -----------------------------------------------------------------------
+
+        if _is_escalation_required(escalation):
+
+            # Get the reason provided by the escalation agent.
+            escalation_reason = _get_escalation_reason(
+                escalation
+            )
+
+            # Use the most useful issue description available.
+            issue = (
+                escalation_reason
+                or issue_type
+                or payload.message
             )
 
             try:
-                models.create_ticket(
-                    ticket_id=case_id,
+                # The Mongo-backed route owns ticket identity and creation.
+                ticket = models.find_or_create_open_ticket(
+                    ticket_id="CASE-" + uuid4().hex[:12].upper(),
                     user_id=user_id,
                     issue=issue,
                     order_id=order_id,
                     conversation_id=conversation_id,
                 )
-                print(f"[ESCALATION] Support case created: {case_id}")
-            except Exception as exc:
-                print(f"[ESCALATION ERROR] Could not create support case: {exc}")
-                ticket_creation_failed = True
+                case_id = ticket["ticket_id"]
+                if not models.update_ticket_issue(case_id, issue, order_id=order_id):
+                    raise RuntimeError("Ticket disappeared during update")
+                response_text = re.sub(r"\bCASE-[A-Z0-9-]+\b", "your support request", response_text, flags=re.IGNORECASE)
+                response_text = f"{response_text.rstrip()} Your reference is {case_id}."
+            except Exception:
+                if user_message:
+                    models.set_message_failed(conversation_id, user_message["id"], True)
+                if payload.request_id:
+                    models.update_chat_request(user_id, payload.request_id, "failed", conversation_id=conversation_id)
+                return {
+                    "conversation_id": conversation_id,
+                    "response": "Your request needs specialist assistance, but we encountered an issue creating the support ticket. Please try again.",
+                    "error": True,
+                    "error_type": "ticket_creation_failed",
+                }
 
-            # H4: If ticket creation fails, do not tell the customer that the ticket was successfully created
-            if ticket_creation_failed:
-                response_text = (
-                    "Your request requires specialist assistance, but we encountered an issue "
-                    "automatically creating your support ticket. Please try again in a moment "
-                    "or contact support directly."
-                )
+        # -----------------------------------------------------------------------
+        # Save valid AI response in MongoDB
+        # -----------------------------------------------------------------------
 
-    # -----------------------------------------------------------------------
-    # Save valid AI response in MongoDB
-    # -----------------------------------------------------------------------
+        models.add_message(
+            conversation_id,
+            "assistant",
+            response_text,
+        )
 
-    models.add_message(
-        conversation_id,
-        "assistant",
-        response_text,
-    )
+        if payload.request_id:
+            if user_message:
+                models.set_message_failed(conversation_id, user_message["id"], False)
+            models.update_chat_request(user_id, payload.request_id, "done", response_text, conversation_id)
 
-    # -----------------------------------------------------------------------
-    # Return response to frontend
-    # -----------------------------------------------------------------------
+        # -----------------------------------------------------------------------
+        # Return response to frontend
+        # -----------------------------------------------------------------------
 
-    return {
-        "conversation_id": conversation_id,
-        "response": response_text,
-    }
+        return {
+            "conversation_id": conversation_id,
+            "response": response_text,
+        }
 
+
+
+    except Exception:
+        if payload.request_id:
+            if user_message and conversation_id:
+                models.set_message_failed(conversation_id, user_message["id"], True)
+            models.update_chat_request(user_id, payload.request_id, "failed", conversation_id=conversation_id)
+        raise
 
 # ---------------------------------------------------------------------------
 # List conversations

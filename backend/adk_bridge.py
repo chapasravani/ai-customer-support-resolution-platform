@@ -14,7 +14,6 @@ This file does not change the agent graph. It only:
 
 import asyncio
 import os
-import traceback
 
 from pathlib import Path
 from dotenv import load_dotenv
@@ -72,6 +71,7 @@ _fallback_runner = Runner(
 async def _get_or_create_session(
     user_id: str,
     session_id: str,
+    initial_state: dict = None,
 ):
     session = await _session_service.get_session(
         app_name=APP_NAME,
@@ -84,6 +84,7 @@ async def _get_or_create_session(
             app_name=APP_NAME,
             user_id=user_id,
             session_id=session_id,
+            state=initial_state or {},
         )
         # H6: Hydrate session from existing Mongo conversation history across restarts
         try:
@@ -91,25 +92,42 @@ async def _get_or_create_session(
             convo = models.get_conversation(session_id)
             if convo and convo.get("messages"):
                 from google.adk.events.event import Event
-                # Include past turns; exclude the newest message (already added to DB, to be run now)
-                past_turns = convo["messages"][:-1]
+                past_turns = [m for m in convo["messages"][:-1] if not m.get("failed")]
                 for msg in past_turns:
                     role = msg.get("role", "user")
                     text = msg.get("content", "")
                     if text:
                         adk_role = "user" if role == "user" else "model"
-                        session.events.append(
-                            Event(
-                                author=role,
-                                content=types.Content(
-                                    role=adk_role,
-                                    parts=[types.Part(text=text)],
-                                ),
-                            )
+                        evt = Event(
+                            author=role,
+                            content=types.Content(
+                                role=adk_role,
+                                parts=[types.Part(text=text)],
+                            ),
                         )
-        except Exception as exc:
-            print(f"[SESSION HYDRATION] Notice: Could not re-hydrate session: {exc}")
+                        await _session_service.append_event(session, evt)
+        except Exception:
+            await _session_service.delete_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)
+            raise
+    elif initial_state:
+        from google.adk.events.event import Event, EventActions
+        changed_state = {
+            key: value for key, value in initial_state.items()
+            if (session.state or {}).get(key) != value
+        }
+        if changed_state:
+            evt = Event(actions=EventActions(state_delta=changed_state))
+            await _session_service.append_event(session, evt)
 
+    # Re-fetch session to verify persisted state
+    session = await _session_service.get_session(
+        app_name=APP_NAME,
+        user_id=user_id,
+        session_id=session_id,
+    )
+
+    if initial_state and any(session.state.get(key) != value for key, value in initial_state.items()):
+        raise RuntimeError("Authenticated session state did not persist")
     return session
 
 
@@ -143,21 +161,30 @@ async def run_support_workflow(
     """
 
     # -----------------------------------------------------------------------
-    # Make sure the ADK session exists
+    # Make sure the ADK session exists with authenticated customer context
     # -----------------------------------------------------------------------
 
-    session = await _get_or_create_session(
-        user_id,
-        session_id,
-    )
-    if session and hasattr(session, "state"):
-        if customer_id:
-            session.state["authenticated_customer_id"] = customer_id
-            session.state["customer_id"] = customer_id
-        if user_email:
-            session.state["authenticated_user_email"] = user_email
-        if user_role:
-            session.state["authenticated_user_role"] = user_role
+    auth_state = {}
+    if customer_id:
+        auth_state["authenticated_customer_id"] = customer_id
+    if user_email:
+        auth_state["authenticated_user_email"] = user_email
+    if user_role:
+        auth_state["authenticated_user_role"] = user_role
+
+    try:
+        session = await _get_or_create_session(
+            user_id,
+            session_id,
+            initial_state=auth_state,
+        )
+    except Exception:
+        return {
+            "response": "Your conversation history is temporarily unavailable. Please try again.",
+            "success": False,
+            "error_type": "history_unavailable",
+            "escalation": {}, "investigation": {}, "resolution": {}, "order_id": "", "issue_type": "",
+        }
 
     # -----------------------------------------------------------------------
     # Convert the customer's message into an ADK Content object
@@ -171,6 +198,7 @@ async def run_support_workflow(
     )
 
     final_text = ""
+    action_started = False
     runners_to_try = [("primary", _primary_runner)]
     if _fallback_runner is not _primary_runner:
         runners_to_try.append(("fallback", _fallback_runner))
@@ -187,6 +215,16 @@ async def run_support_workflow(
                     session_id=session_id,
                     new_message=content,
                 ):
+                    author = str(getattr(event, "author", "") or getattr(event, "node_name", ""))
+                    if "business_action_agent" in author.lower():
+                        action_started = True
+                    for part in getattr(getattr(event, "content", None), "parts", []) or []:
+                        call = getattr(part, "function_call", None)
+                        if call and getattr(call, "name", "") in {
+                            "create_refund_request", "create_replacement_request",
+                            "create_cancellation_request", "create_support_case",
+                        }:
+                            action_started = True
                     # Capture response from agents
                     if event.content and event.content.parts:
                         text = "".join(
@@ -208,6 +246,13 @@ async def run_support_workflow(
 
                 if final_text:
                     break
+                if action_started:
+                    return {
+                        "response": "Your request may have started an action, but the workflow stopped before it could confirm the result. Please contact support before retrying.",
+                        "success": False,
+                        "error_type": "partial_after_action",
+                        "escalation": {}, "investigation": {}, "resolution": {}, "order_id": "", "issue_type": "",
+                    }
 
             except Exception as exc:
                 error_text = str(exc)
@@ -220,6 +265,14 @@ async def run_support_workflow(
                     or "rate limit" in error_text.lower()
                     or "quota" in error_text.lower()
                 )
+
+                if action_started:
+                    return {
+                        "response": "Your request may have started an action, but the workflow stopped before it could confirm the result. Please contact support before retrying.",
+                        "success": False,
+                        "error_type": "partial_after_action",
+                        "escalation": {}, "investigation": {}, "resolution": {}, "order_id": "", "issue_type": "",
+                    }
 
                 if is_transient:
                     if attempt < max_retries:
@@ -235,8 +288,6 @@ async def run_support_workflow(
                 print(f"[ADK ERROR] ({runner_name})")
                 print(f"{type(exc).__name__}: {error_text}")
                 print("=" * 70)
-                traceback.print_exc()
-
                 # If primary failed with non-transient, try fallback before giving up
                 if runner_name == "primary" and len(runners_to_try) > 1:
                     print("[FALLBACK] Attempting fallback runner after non-transient error on primary...")
@@ -334,11 +385,16 @@ async def run_support_workflow(
     # Return EVERYTHING needed by the FastAPI backend
     # -----------------------------------------------------------------------
 
+    if not final_text:
+        return {
+            "response": "I wasn't able to generate a response. Please try again.",
+            "success": False,
+            "error_type": "empty_response",
+            "escalation": {}, "investigation": {}, "resolution": {}, "order_id": "", "issue_type": "",
+        }
+
     return {
-        "response": (
-            final_text
-            or "I wasn't able to generate a response. Please try again."
-        ),
+        "response": final_text,
         "success": True,
         "escalation": escalation,
         "investigation": investigation,

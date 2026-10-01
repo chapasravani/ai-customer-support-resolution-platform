@@ -13,6 +13,7 @@ Role Separation & Dashboard Security Test Suite:
 """
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -24,7 +25,7 @@ from backend.main import app
 from final_customer_support.tools import business_actions
 
 client = TestClient(app)
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture(scope="module")
@@ -194,7 +195,10 @@ def test_04_cross_customer_data_isolation(test_users):
     assert resp_t_a.json()["ticket_id"] == ticket_id
 
     # Cross-customer order action blocked
-    res_action = business_actions.create_refund_request(order_id="ORD123", reason="testing", customer_id="C102")
+    res_action = business_actions.create_refund_request(
+        order_id="ORD123", reason="testing",
+        tool_context=SimpleNamespace(state={"authenticated_customer_id": "C102", "authenticated_user_role": "customer"}),
+    )
     assert res_action.get("status") == "rejected"
     assert "ownership verification failed" in res_action.get("reason", "").lower()
 
@@ -225,8 +229,9 @@ def test_05_public_registration_cannot_create_admin():
         "/auth/register",
         json={"email": new_email, "password": "Password123!", "name": "Clean Customer"},
     )
-    assert resp_clean.status_code == 200
-    assert resp_clean.json()["role"] == "customer"
+    assert resp_clean.status_code == 202
+    assert resp_clean.json() == {"detail": "If this email can be registered, you can now log in."}
+    assert models.get_user_by_email(new_email)["role"] == "customer"
     db.get_db().users.delete_one({"email": new_email})
 
 

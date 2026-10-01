@@ -9,15 +9,7 @@
    CONFIGURATION
    ========================================================= */
 
-const API_BASE_URL = (
-    (typeof window !== "undefined" && (window.API_BASE_URL || window.__API_BASE__)) ||
-    (typeof localStorage !== "undefined" && localStorage.getItem("api_base_url")) ||
-    (typeof window !== "undefined" && window.location.port === "8000"
-        ? window.location.origin
-        : (typeof window !== "undefined" && window.location.hostname === "localhost"
-            ? "http://localhost:8000"
-            : "http://127.0.0.1:8000"))
-).replace(/\/+$/, "");
+const API_BASE_URL = window.SUPPORTAI_CONFIG.API_URL.replace(/\/+$/, "");
 
 
 /* =========================================================
@@ -76,12 +68,7 @@ const elements = {
         document.getElementById("sidebar"),
 
     sidebarToggleBtn:
-        document.getElementById("sidebarToggleBtn") ||
-        document.getElementById("mobileMenuBtn"),
-
-    mobileMenuBtn:
-        document.getElementById("sidebarToggleBtn") ||
-        document.getElementById("mobileMenuBtn"),
+        document.getElementById("sidebarToggleBtn"),
 
     sidebarBackdrop:
         document.getElementById("sidebarBackdrop"),
@@ -335,7 +322,7 @@ function updateSidebarUI() {
     const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
     const sidebar = elements.sidebar || document.getElementById("sidebar");
     const backdrop = elements.sidebarBackdrop || document.getElementById("sidebarBackdrop");
-    const toggleBtn = elements.sidebarToggleBtn || elements.mobileMenuBtn || document.getElementById("sidebarToggleBtn");
+    const toggleBtn = elements.sidebarToggleBtn || document.getElementById("sidebarToggleBtn");
     const appShell = document.querySelector(".app-shell");
 
     if (!sidebar) return;
@@ -602,7 +589,7 @@ function setupEventListeners() {
 
 
     /* Sidebar toggle (desktop collapse & mobile drawer) */
-    const toggleBtn = elements.sidebarToggleBtn || elements.mobileMenuBtn || document.getElementById("sidebarToggleBtn");
+    const toggleBtn = elements.sidebarToggleBtn || document.getElementById("sidebarToggleBtn");
     if (toggleBtn) {
         toggleBtn.addEventListener("click", (e) => {
             e.preventDefault();
@@ -1212,10 +1199,10 @@ async function handleRegister(event) {
     }
 
 
-    if (password.length < 6) {
+    if (password.length < 10) {
 
         showAuthError(
-            "Password must contain at least 6 characters."
+            "Password must contain at least 10 characters."
         );
 
         return;
@@ -1252,24 +1239,10 @@ async function handleRegister(event) {
             );
 
 
-        if (data && data.access_token) {
-            state.token = data.access_token;
-            localStorage.setItem("supportai_token", state.token);
-            await loadCurrentUser();
-            closeAuthModal();
-            showToast("Account created! Welcome to SupportAI.");
-            await loadConversations();
-            elements.messageInput?.focus();
-        } else {
-            showToast(
-                "Account created. Please sign in."
-            );
-
-            state.authMode = "register";
-            toggleAuthMode();
-            elements.loginEmail.value = email;
-            elements.loginPassword.focus();
-        }
+        toggleAuthMode();
+        elements.loginEmail.value = email;
+        elements.loginPassword.focus();
+        showAuthError(data.detail || "If this email can be registered, you can now log in.");
 
     } catch (error) {
 
@@ -1567,7 +1540,7 @@ function setAvatarLetter(letter) {
    CHAT
    ========================================================= */
 
-async function sendMessage() {
+async function sendMessage(retryRequestId = null) {
 
     if (state.isSending) {
 
@@ -1605,9 +1578,14 @@ async function sendMessage() {
      * Show user's message immediately.
      */
 
+    const requestId = retryRequestId || crypto.randomUUID();
+
     addMessage(
         "user",
-        message
+        message,
+        new Date(),
+        false,
+        requestId
     );
 
 
@@ -1630,7 +1608,8 @@ async function sendMessage() {
 
         const payload = {
 
-            message
+            message,
+            request_id: requestId
 
         };
 
@@ -1688,10 +1667,19 @@ async function sendMessage() {
          * Display AI response.
          */
 
-        addMessage(
-            "assistant",
-            data.response
-        );
+        if (data.error) {
+            addMessage(
+                "assistant",
+                data.response,
+                new Date(),
+                true
+            );
+        } else {
+            addMessage(
+                "assistant",
+                data.response
+            );
+        }
 
 
         updateConversationTitle(
@@ -1756,10 +1744,30 @@ async function sendMessage() {
    ADD MESSAGE
    ========================================================= */
 
+function createCopyButton(text) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "message-action-btn";
+    button.title = "Copy";
+    button.setAttribute("aria-label", "Copy");
+    button.textContent = "📋";
+    button.addEventListener("click", async () => {
+        try {
+            await navigator.clipboard.writeText(text || "");
+            showToast("Response copied.");
+        } catch {
+            showToast("Unable to copy response.");
+        }
+    });
+    return button;
+}
+
 function addMessage(
     role,
     text,
-    timestamp = new Date()
+    timestamp = new Date(),
+    isError = false,
+    requestId = null
 ) {
 
     const row =
@@ -1843,7 +1851,7 @@ function addMessage(
     content.appendChild(label);
     content.appendChild(bubble);
 
-    if (role === "assistant") {
+    if (role === "assistant" && !isError) {
 
         const actions =
             document.createElement("div");
@@ -1851,28 +1859,7 @@ function addMessage(
         actions.className =
             "message-actions";
 
-        const copyButton =
-            document.createElement("button");
-
-        copyButton.type = "button";
-        copyButton.className = "message-action-btn";
-        copyButton.title = "Copy";
-        copyButton.setAttribute("aria-label", "Copy");
-        copyButton.textContent = "📋";
-
-        copyButton.addEventListener(
-            "click",
-            async () => {
-                try {
-                    await navigator.clipboard.writeText(
-                        text || ""
-                    );
-                    showToast("Response copied.");
-                } catch {
-                    showToast("Unable to copy response.");
-                }
-            }
-        );
+        const copyButton = createCopyButton(text);
 
         const likeButton =
             document.createElement("button");
@@ -1887,9 +1874,10 @@ function addMessage(
             "click",
             async () => {
                 const wasSelected = likeButton.classList.contains("selected");
-                likeButton.classList.toggle("selected");
+                if (wasSelected) return;
+                likeButton.classList.add("selected");
                 dislikeButton.classList.remove("selected");
-                if (!wasSelected && state.conversationId) {
+                if (state.conversationId) {
                     try {
                         await apiRequest("/chat/feedback", {
                             method: "POST",
@@ -1900,10 +1888,9 @@ function addMessage(
                         });
                         showToast("Thanks for your feedback.");
                     } catch {
-                        showToast("Thanks for your feedback.");
+                        likeButton.classList.remove("selected");
+                        showToast("Failed to save feedback. Please try again.");
                     }
-                } else {
-                    showToast("Feedback removed.");
                 }
             }
         );
@@ -1921,9 +1908,10 @@ function addMessage(
             "click",
             async () => {
                 const wasSelected = dislikeButton.classList.contains("selected");
-                dislikeButton.classList.toggle("selected");
+                if (wasSelected) return;
+                dislikeButton.classList.add("selected");
                 likeButton.classList.remove("selected");
-                if (!wasSelected && state.conversationId) {
+                if (state.conversationId) {
                     try {
                         await apiRequest("/chat/feedback", {
                             method: "POST",
@@ -1934,10 +1922,9 @@ function addMessage(
                         });
                         showToast("Thanks for your feedback.");
                     } catch {
-                        showToast("Thanks for your feedback.");
+                        dislikeButton.classList.remove("selected");
+                        showToast("Failed to save feedback. Please try again.");
                     }
-                } else {
-                    showToast("Feedback removed.");
                 }
             }
         );
@@ -1946,6 +1933,19 @@ function addMessage(
         actions.appendChild(likeButton);
         actions.appendChild(dislikeButton);
 
+        content.appendChild(actions);
+
+    } else if (role === "assistant" && isError) {
+
+        const actions =
+            document.createElement("div");
+
+        actions.className =
+            "message-actions";
+
+        const copyButton = createCopyButton(text);
+
+        actions.appendChild(copyButton);
         content.appendChild(actions);
 
     } else if (role === "user") {
@@ -2020,7 +2020,7 @@ function addMessage(
                 if (elements.messageInput) {
                     elements.messageInput.value = text || "";
                     updateSendButton();
-                    sendMessage();
+                    sendMessage(requestId);
                 }
             }
         );

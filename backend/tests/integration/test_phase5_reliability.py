@@ -169,7 +169,7 @@ def test_h4_false_ticket_created_response():
             "issue_type": "general_support",
         }):
             # Simulate create_ticket throwing a database failure
-            with patch("backend.models.create_ticket", side_effect=RuntimeError("Database write error")):
+            with patch("backend.models.find_or_create_open_ticket", side_effect=RuntimeError("Database write error")):
                 res = asyncio.run(chat.send_message(
                     ChatMessageRequest(conversation_id=convo_id, message="Help me please"),
                     user=user,
@@ -179,11 +179,13 @@ def test_h4_false_ticket_created_response():
                 assert "CASE-12345678" not in res["response"], f"False ticket ID returned: {res['response']}"
                 assert "encountered an issue" in res["response"] or "unable" in res["response"]
 
-                # Verify MongoDB stored message also reflects the accurate response
+                assert res["error"] is True
+                assert res["error_type"] == "ticket_creation_failed"
+
+                # Failed ticket creation is not saved as a normal assistant turn.
                 saved_convo = models.get_conversation(convo_id)
                 assistant_msgs = [m for m in saved_convo["messages"] if m["role"] == "assistant"]
-                assert len(assistant_msgs) == 1
-                assert "CASE-12345678" not in assistant_msgs[0]["content"]
+                assert assistant_msgs == []
 
         print("  OK - customer is not falsely told a ticket was created when creation fails.")
     finally:

@@ -1,12 +1,4 @@
-const API_BASE = (
-    (typeof window !== "undefined" && (window.API_BASE_URL || window.__API_BASE__)) ||
-    (typeof localStorage !== "undefined" && localStorage.getItem("api_base_url")) ||
-    (typeof window !== "undefined" && window.location.port === "8000"
-        ? window.location.origin
-        : (typeof window !== "undefined" && window.location.hostname === "localhost"
-            ? "http://localhost:8000"
-            : "http://127.0.0.1:8000"))
-).replace(/\/+$/, "");
+const API_BASE = window.SUPPORTAI_CONFIG.API_URL.replace(/\/+$/, "");
 
 const state = {
     token: localStorage.getItem("admin_token"),
@@ -543,9 +535,9 @@ function renderDocuments(documents) {
 
                                 <button
                                     class="delete-button"
-                                    onclick="deleteDocument('${escapeHtml(
+                                    data-document-id="${escapeHtml(
                                         document.id
-                                    )}')"
+                                    )}"
                                 >
                                     Delete
                                 </button>
@@ -557,6 +549,16 @@ function renderDocuments(documents) {
                 }
             )
             .join("");
+
+    if (documentsBody && !documentsBody.dataset.listenerBound) {
+        documentsBody.dataset.listenerBound = "true";
+        documentsBody.addEventListener("click", (event) => {
+            const btn = event.target.closest(".delete-button");
+            if (btn && btn.dataset.documentId) {
+                deleteDocument(btn.dataset.documentId);
+            }
+        });
+    }
 }
 
 
@@ -867,58 +869,17 @@ function renderSupportCases(tickets) {
                                     class="case-status-select"
                                     id="case-status-${encodedTicketId}"
                                 >
-
-                                    <option
-                                        value="open"
-                                        ${
-                                            status ===
-                                            "open"
-                                                ? "selected"
-                                                : ""
-                                        }
-                                    >
-                                        Open
-                                    </option>
-
-
-                                    <option
-                                        value="investigating"
-                                        ${
-                                            status ===
-                                            "investigating"
-                                                ? "selected"
-                                                : ""
-                                        }
-                                    >
-                                        Investigating
-                                    </option>
-
-
-                                    <option
-                                        value="escalated"
-                                        ${
-                                            status ===
-                                            "escalated"
-                                                ? "selected"
-                                                : ""
-                                        }
-                                    >
-                                        Escalated
-                                    </option>
-
-
-                                    <option
-                                        value="resolved"
-                                        ${
-                                            status ===
-                                            "resolved"
-                                                ? "selected"
-                                                : ""
-                                        }
-                                    >
-                                        Resolved
-                                    </option>
-
+                                    <option value="open" ${status === "open" ? "selected" : ""}>Open</option>
+                                    <option value="investigating" ${status === "investigating" ? "selected" : ""}>Investigating</option>
+                                    <option value="in_progress" ${status === "in_progress" ? "selected" : ""}>In Progress</option>
+                                    <option value="escalated" ${status === "escalated" ? "selected" : ""}>Escalated</option>
+                                    <option value="resolved" ${status === "resolved" ? "selected" : ""}>Resolved</option>
+                                    <option value="closed" ${status === "closed" ? "selected" : ""}>Closed</option>
+                                    ${
+                                        !["open", "investigating", "in_progress", "escalated", "resolved", "closed"].includes(status)
+                                            ? `<option value="${escapeHtml(status)}" selected>${escapeHtml(status)}</option>`
+                                            : ""
+                                    }
                                 </select>
 
                             </td>
@@ -928,7 +889,7 @@ function renderSupportCases(tickets) {
 
                                 <button
                                     class="case-update-button"
-                                    onclick="updateSupportCase('${encodedTicketId}')"
+                                    data-ticket-id="${encodedTicketId}"
                                 >
                                     Update
                                 </button>
@@ -940,6 +901,16 @@ function renderSupportCases(tickets) {
                 }
             )
             .join("");
+
+    if (casesBody && !casesBody.dataset.listenerBound) {
+        casesBody.dataset.listenerBound = "true";
+        casesBody.addEventListener("click", (event) => {
+            const btn = event.target.closest(".case-update-button");
+            if (btn && btn.dataset.ticketId) {
+                updateSupportCase(decodeURIComponent(btn.dataset.ticketId));
+            }
+        });
+    }
 }
 
 

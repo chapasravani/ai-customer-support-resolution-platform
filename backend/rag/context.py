@@ -19,10 +19,13 @@ def retrieve_support_context(
     and format it as context for the AI workflow.
     """
 
-    results = search_documents(
-        query=query,
-        top_k=top_k,
-    )
+    try:
+        results = search_documents(
+            query=query,
+            top_k=top_k,
+        )
+    except Exception:
+        return "RAG_UNAVAILABLE: Support policy lookup is temporarily unavailable."
 
     if not results:
         return "No relevant support-policy information was found."

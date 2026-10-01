@@ -30,8 +30,13 @@ import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 from final_customer_support.tools import business_actions
+
+
+def _context(customer_id):
+    return SimpleNamespace(state={"authenticated_customer_id": customer_id, "authenticated_user_role": "customer"})
 
 
 def setup_temp_data():
@@ -39,7 +44,7 @@ def setup_temp_data():
     temp_path = Path(temp_dir)
 
     # Copy orders.json and policies.json from repo
-    repo_data = business_actions.BASE / "data"
+    repo_data = business_actions.FIXTURE_DATA
     shutil.copy(repo_data / "orders.json", temp_path / "orders.json")
     shutil.copy(repo_data / "policies.json", temp_path / "policies.json")
 
@@ -62,12 +67,12 @@ def test_c3_duplicate_cancellation():
         business_actions.DATA = temp_path
 
         # ORD125 is in 'Processing' state, owned by C101
-        res1 = business_actions.create_cancellation_request("ORD125", "cancel order", customer_id="C101")
+        res1 = business_actions.create_cancellation_request("ORD125", "cancel order", tool_context=_context("C101"))
         assert res1["status"] == "created", f"Expected 'created', got {res1}"
         assert res1["reference"].startswith("CAN-"), f"Unexpected ref: {res1['reference']}"
 
         # Second call must return already_requested with same ref
-        res2 = business_actions.create_cancellation_request("ORD125", "cancel order again", customer_id="C101")
+        res2 = business_actions.create_cancellation_request("ORD125", "cancel order again", tool_context=_context("C101"))
         assert res2["status"] == "already_requested", f"Expected 'already_requested', got {res2}"
         assert res2["reference"] == res1["reference"], f"Reference mismatch: {res2['reference']} != {res1['reference']}"
 
@@ -89,13 +94,13 @@ def test_c4_high_value_refund_approval_duplicate():
         business_actions.DATA = temp_path
 
         # ORD123 has amount=1299 (>= 1000), status='Delayed', owned by C101
-        res1 = business_actions.create_refund_request("ORD123", "delayed laptop refund", customer_id="C101")
+        res1 = business_actions.create_refund_request("ORD123", "delayed laptop refund", tool_context=_context("C101"))
         assert res1["status"] == "pending_human_approval", f"Expected 'pending_human_approval', got {res1}"
         assert res1["reference"].startswith("APR-"), f"Unexpected ref: {res1['reference']}"
         apr_ref = res1["reference"]
 
         # Second call must NOT create a new APR- record; it must return already_requested
-        res2 = business_actions.create_refund_request("ORD123", "delayed laptop refund retry", customer_id="C101")
+        res2 = business_actions.create_refund_request("ORD123", "delayed laptop refund retry", tool_context=_context("C101"))
         assert res2["status"] == "already_requested", f"Expected 'already_requested', got {res2}"
         assert res2["reference"] == apr_ref, f"Reference mismatch: {res2['reference']} != {apr_ref}"
 
@@ -105,11 +110,11 @@ def test_c4_high_value_refund_approval_duplicate():
         assert len(apr_entries) == 1, f"Expected 1 refund entry, found {len(apr_entries)}"
 
         # Also test normal-value refund duplicate protection (ORD124, amount 149, Delivered)
-        res_norm1 = business_actions.create_refund_request("ORD124", "damaged headphones", customer_id="C102")
-        assert res_norm1["status"] == "created", f"Expected 'created', got {res_norm1}"
-        assert res_norm1["reference"].startswith("REF-")
+        res_norm1 = business_actions.create_refund_request("ORD124", "damaged headphones", tool_context=_context("C102"))
+        assert res_norm1["status"] == "pending_human_approval", f"Expected human review, got {res_norm1}"
+        assert res_norm1["reference"].startswith("APR-")
 
-        res_norm2 = business_actions.create_refund_request("ORD124", "damaged headphones retry", customer_id="C102")
+        res_norm2 = business_actions.create_refund_request("ORD124", "damaged headphones retry", tool_context=_context("C102"))
         assert res_norm2["status"] == "already_requested"
         assert res_norm2["reference"] == res_norm1["reference"]
 
@@ -128,28 +133,28 @@ def test_c5_deterministic_policy_mapping():
 
         # 1. Processing order (ORD125):
         # Refund and Replacement must be rejected under general_support policy
-        ref_proc = business_actions.create_refund_request("ORD125", "refund processing order", customer_id="C101")
+        ref_proc = business_actions.create_refund_request("ORD125", "refund processing order", tool_context=_context("C101"))
         assert ref_proc["status"] == "rejected", f"Expected 'rejected', got {ref_proc}"
         assert "Refund is not allowed" in ref_proc["reason"]
 
-        repl_proc = business_actions.create_replacement_request("ORD125", "replace processing order", customer_id="C101")
+        repl_proc = business_actions.create_replacement_request("ORD125", "replace processing order", tool_context=_context("C101"))
         assert repl_proc["status"] == "rejected", f"Expected 'rejected', got {repl_proc}"
         assert "Replacement is not allowed" in repl_proc["reason"]
 
         # But cancellation IS allowed for Processing order
-        can_proc = business_actions.create_cancellation_request("ORD125", "cancel processing order", customer_id="C101")
+        can_proc = business_actions.create_cancellation_request("ORD125", "cancel processing order", tool_context=_context("C101"))
         assert can_proc["status"] == "created"
 
         # 2. Delivered order (ORD124):
         # Cancellation must be rejected (not in cancellable state)
-        can_deliv = business_actions.create_cancellation_request("ORD124", "cancel delivered order", customer_id="C102")
+        can_deliv = business_actions.create_cancellation_request("ORD124", "cancel delivered order", tool_context=_context("C102"))
         assert can_deliv["status"] == "rejected", f"Expected 'rejected', got {can_deliv}"
         assert "not in a cancellable state" in can_deliv["reason"]
 
         # Refund and replacement ARE allowed for Delivered order (damaged_order policy)
-        repl_deliv = business_actions.create_replacement_request("ORD124", "replace damaged headphones", customer_id="C102")
-        assert repl_deliv["status"] == "created"
-        assert repl_deliv["reference"].startswith("RPL-")
+        repl_deliv = business_actions.create_replacement_request("ORD124", "replace damaged headphones", tool_context=_context("C102"))
+        assert repl_deliv["status"] == "pending_human_approval"
+        assert repl_deliv["reference"].startswith("APR-")
 
         # 3. Add a mock Cancelled order to orders.json to verify cancelled_order policy
         orders = json.loads((temp_path / "orders.json").read_text(encoding="utf-8"))
@@ -162,17 +167,17 @@ def test_c5_deterministic_policy_mapping():
         (temp_path / "orders.json").write_text(json.dumps(orders, indent=2), encoding="utf-8")
 
         # Cancelled order cannot get replacement (replacement_available: false)
-        repl_canc = business_actions.create_replacement_request("ORD999", "replace cancelled order", customer_id="C101")
+        repl_canc = business_actions.create_replacement_request("ORD999", "replace cancelled order", tool_context=_context("C101"))
         assert repl_canc["status"] == "rejected", f"Expected 'rejected', got {repl_canc}"
         assert "Replacement is not allowed" in repl_canc["reason"]
 
         # Cancelled order cannot be cancelled again
-        can_canc = business_actions.create_cancellation_request("ORD999", "cancel again", customer_id="C101")
+        can_canc = business_actions.create_cancellation_request("ORD999", "cancel again", tool_context=_context("C101"))
         assert can_canc["status"] == "rejected", f"Expected 'rejected', got {can_canc}"
         assert "not in a cancellable state" in can_canc["reason"]
 
         # Cancelled order CAN get refund (refund_available: true)
-        ref_canc = business_actions.create_refund_request("ORD999", "refund cancelled order", customer_id="C101")
+        ref_canc = business_actions.create_refund_request("ORD999", "refund cancelled order", tool_context=_context("C101"))
         assert ref_canc["status"] == "created", f"Expected 'created', got {ref_canc}"
 
         print("  OK - policy eligibility mapping is strictly deterministic across all states.")
@@ -191,7 +196,7 @@ def test_c6_atomic_concurrency_and_retry():
         # Run 10 concurrent cancellation requests for ORD125 across threads
         results = []
         def send_cancellation():
-            return business_actions.create_cancellation_request("ORD125", "concurrent cancel", customer_id="C101")
+            return business_actions.create_cancellation_request("ORD125", "concurrent cancel", tool_context=_context("C101"))
 
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = [executor.submit(send_cancellation) for _ in range(10)]
@@ -226,7 +231,7 @@ def test_ownership_preservation():
         business_actions.DATA = temp_path
 
         # Customer C101 attempting to cancel ORD124 (owned by C102)
-        res = business_actions.create_cancellation_request("ORD124", "unauthorized cancel", customer_id="C101")
+        res = business_actions.create_cancellation_request("ORD124", "unauthorized cancel", tool_context=_context("C101"))
         assert res["status"] == "rejected", f"Expected 'rejected', got {res}"
         assert "Ownership verification failed" in res["reason"]
 

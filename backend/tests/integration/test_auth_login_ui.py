@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from backend import auth, db, models
 from backend.main import app
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -67,10 +67,8 @@ def test_1_customer_registration_and_immediate_login():
         "password": "JanePassword123!",
         "role": "customer"
     })
-    assert reg_res.status_code == 200, reg_res.text
-    reg_data = reg_res.json()
-    assert "access_token" in reg_data
-    assert reg_data["role"] == "customer"
+    assert reg_res.status_code == 202, reg_res.text
+    assert reg_res.json() == {"detail": "If this email can be registered, you can now log in."}
 
     # Verify user can immediately log in with registered credentials
     login_res = client.post("/auth/login", json={
@@ -106,16 +104,16 @@ def test_3_login_rejects_incorrect_password():
     assert res.json()["detail"] == "Incorrect email or password."
 
 
-def test_4_duplicate_registration_rejected():
-    """Verify registering an already existing email returns HTTP 400."""
+def test_4_duplicate_registration_uses_generic_response():
+    """Existing and new addresses receive the same registration response."""
     client = TestClient(app)
     res = client.post("/auth/register", json={
         "name": "Duplicate Jane",
         "email": "jane.doe@example.com",
         "password": "AnotherPassword123!"
     })
-    assert res.status_code == 400
-    assert "already exists" in res.json()["detail"].lower()
+    assert res.status_code == 202
+    assert res.json() == {"detail": "If this email can be registered, you can now log in."}
 
 
 def test_5_public_registration_cannot_create_admin():

@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from .. import models
 from ..deps import require_admin
@@ -40,6 +40,7 @@ def _serialize(d: dict) -> dict:
 async def upload_document(
     file: UploadFile = File(...),
     admin: dict = Depends(require_admin),
+    replace_document_id: str | None = Form(None),
 ):
     """
     Upload a support document and index it into the RAG vector store.
@@ -72,6 +73,12 @@ async def upload_document(
             detail="File size exceeds the 10MB limit.",
         )
 
+    old_document = None
+    if replace_document_id:
+        old_document = models.get_document(replace_document_id)
+        if not old_document:
+            raise HTTPException(status_code=404, detail="Document to replace not found.")
+
     # Create MongoDB document record first.
     doc = models.create_document_record(
         filename=filename,
@@ -80,6 +87,7 @@ async def upload_document(
 
     document_id = str(doc["_id"])
     temp_path = None
+    vector_ids = []
 
     try:
         # Save temporarily so the RAG ingestion code
@@ -99,19 +107,39 @@ async def upload_document(
                 "No readable text was found in the uploaded document."
             )
 
-        # Generate embeddings and store chunks in ChromaDB off the event loop.
-        chunk_count = await asyncio.to_thread(
+        # add_document_chunks uses this exact ID scheme. Keep the IDs before
+        # indexing so a partial Chroma write can be rolled back if it raises.
+        vector_ids = [f"{document_id}:{index}" for index in range(len(chunks))]
+
+        # Generate embeddings and store chunks in ChromaDB off the event loop (H2: keyed by document_id).
+        stored_ids = await asyncio.to_thread(
             add_document_chunks,
             chunks=chunks,
             source=filename,
+            document_id=document_id,
         )
+        if isinstance(stored_ids, list):
+            vector_ids = stored_ids
+        chunk_count = len(vector_ids)
 
-        # Update MongoDB document status.
+        # Update MongoDB document status with exact vector IDs (H2).
         models.update_document_status(
             document_id=document_id,
             status="indexed",
             chunk_count=chunk_count,
+            vector_ids=vector_ids,
         )
+
+        if old_document:
+            old_vector_ids = old_document.get("vector_ids") or []
+            await asyncio.to_thread(
+                delete_document_chunks,
+                vector_ids=old_vector_ids,
+            )
+            models.update_document_status(
+                document_id=replace_document_id,
+                status="superseded",
+            )
 
         # Read the updated document record.
         updated_doc = models.get_document(document_id)
@@ -119,6 +147,11 @@ async def upload_document(
         return _serialize(updated_doc or doc)
 
     except ValueError as exc:
+        if vector_ids:
+            try:
+                await asyncio.to_thread(delete_document_chunks, vector_ids=vector_ids)
+            except Exception:
+                logger.exception("Could not roll back chunks for failed document %s", document_id)
         models.update_document_status(
             document_id=document_id,
             status="failed",
@@ -129,6 +162,11 @@ async def upload_document(
         )
 
     except HTTPException:
+        if vector_ids:
+            try:
+                await asyncio.to_thread(delete_document_chunks, vector_ids=vector_ids)
+            except Exception:
+                logger.exception("Could not roll back chunks for failed document %s", document_id)
         models.update_document_status(
             document_id=document_id,
             status="failed",
@@ -137,6 +175,11 @@ async def upload_document(
 
     except Exception as exc:
         logger.exception("Document processing failed: %s", exc)
+        if vector_ids:
+            try:
+                await asyncio.to_thread(delete_document_chunks, vector_ids=vector_ids)
+            except Exception:
+                logger.exception("Could not roll back chunks for failed document %s", document_id)
         models.update_document_status(
             document_id=document_id,
             status="failed",
@@ -179,10 +222,20 @@ def delete_document(
         )
 
     filename = document.get("filename", "")
+    vector_ids = document.get("vector_ids") or []
 
-    deleted_chunks = delete_document_chunks(
-        source=filename
-    )
+    try:
+        deleted_chunks = delete_document_chunks(
+            source=filename,
+            vector_ids=vector_ids if vector_ids else None,
+            document_id=document_id,
+        )
+    except Exception as exc:
+        logger.exception("Could not delete chunks for document %s", document_id)
+        raise HTTPException(
+            status_code=503,
+            detail="Document vectors could not be deleted. The document remains available for retry.",
+        ) from exc
 
     deleted = models.delete_document(
         document_id

@@ -23,26 +23,20 @@ def get_jwt_secret() -> str:
     """
     Retrieve and validate the JWT secret from environment.
     Never exposes or logs the actual secret.
-    Fails safely if missing or if the insecure default is used in production.
+    Fails safely if missing, shorter than 32 chars, or if the insecure placeholder is used.
     """
     secret = (os.getenv("JWT_SECRET") or "").strip()
     if not secret:
         raise RuntimeError(
-            "JWT_SECRET is not configured. Please define a secure JWT_SECRET in your environment or backend/.env."
+            "JWT_SECRET is not configured. Please define a secure JWT_SECRET (minimum 32 characters) in your environment or backend/.env."
         )
 
-    if secret == INSECURE_DEFAULT_SECRET:
-        env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "development").strip().lower()
-        if env in ("production", "prod"):
-            raise RuntimeError(
-                "Insecure default JWT_SECRET ('dev-only-secret-change-me') cannot be used in a production environment. "
-                "Please configure a cryptographically secure random secret."
-            )
-        import warnings
-        warnings.warn(
-            "Using default JWT_SECRET in development. Set a secure secret in backend/.env before deploying to production.",
-            UserWarning,
-            stacklevel=2,
+    normalized = secret.lower()
+    is_placeholder = normalized.startswith(("replace_with", "changeme", "your_")) or "placeholder" in normalized
+    if secret == INSECURE_DEFAULT_SECRET or len(secret) < 32 or is_placeholder:
+        raise RuntimeError(
+            "Insecure or placeholder JWT_SECRET cannot be used. "
+            "Please configure a cryptographically secure secret of at least 32 characters."
         )
 
     return secret

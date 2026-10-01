@@ -10,7 +10,7 @@ Phase 5:
 import hashlib
 import os
 from pathlib import Path
-from typing import List, Dict
+from typing import Dict, List, Optional
 
 import chromadb
 from dotenv import load_dotenv
@@ -151,25 +151,30 @@ def embed_query(
 def add_document_chunks(
     chunks: List[str],
     source: str,
-) -> int:
+    document_id: str = "",
+) -> List[str]:
     """
     Embed and store document chunks in ChromaDB.
-    Uses collision-resistant IDs combining stem, index, and content hash (H2).
+    Uses document_id as namespace for chunk IDs: f"{document_id}:{index}" (H2).
     """
     if not chunks:
-        return 0
+        return []
 
     embeddings = embed_documents(chunks)
 
-    clean_stem = Path(source).stem[:24]
-    ids = [
-        f"{clean_stem}_{index}_{hashlib.sha256(f'{source}:{index}:{chunk}'.encode('utf-8')).hexdigest()[:12]}"
-        for index, chunk in enumerate(chunks)
-    ]
+    if document_id:
+        ids = [f"{document_id}:{index}" for index in range(len(chunks))]
+    else:
+        clean_stem = Path(source).stem[:24]
+        ids = [
+            f"{clean_stem}_{index}_{hashlib.sha256(f'{source}:{index}:{chunk}'.encode('utf-8')).hexdigest()[:12]}"
+            for index, chunk in enumerate(chunks)
+        ]
 
     metadatas = [
         {
             "source": source,
+            "document_id": document_id,
             "chunk_index": index,
         }
         for index in range(len(chunks))
@@ -183,7 +188,7 @@ def add_document_chunks(
         metadatas=metadatas,
     )
 
-    return len(chunks)
+    return ids
 
 
 # -------------------------------------------------------------------
@@ -196,61 +201,57 @@ def search_documents(
 ) -> List[Dict]:
     """
     Retrieve the most relevant document chunks for a user query.
-    Safe against missing configuration or retrieval errors (H3).
+    An empty result means a healthy search found no matching content. Storage
+    and embedding failures propagate so callers can report RAG as unavailable.
     """
     if not query.strip():
         return []
 
-    try:
-        col = get_chroma_collection()
-        document_count = col.count()
-        if document_count == 0:
-            return []
+    col = get_chroma_collection()
+    document_count = col.count()
+    if document_count == 0:
+        return []
 
-        query_embedding = embed_query(query)
-        if not query_embedding:
-            return []
+    query_embedding = embed_query(query)
+    if not query_embedding:
+        return []
 
-        top_k = min(top_k, document_count)
-        results = col.query(
-            query_embeddings=[query_embedding],
-            n_results=top_k,
+    top_k = min(top_k, document_count)
+    results = col.query(
+        query_embeddings=[query_embedding],
+        n_results=top_k,
+    )
+
+    documents = results.get("documents", [[]])[0]
+    metadatas = results.get("metadatas", [[]])[0]
+    distances = results.get("distances", [[]])[0]
+
+    retrieved = []
+    for document, metadata, distance in zip(documents, metadatas, distances):
+        retrieved.append(
+            {
+                "content": document,
+                "source": metadata.get("source"),
+                "chunk_index": metadata.get("chunk_index"),
+                "distance": distance,
+            }
         )
 
-        documents = results.get("documents", [[]])[0]
-        metadatas = results.get("metadatas", [[]])[0]
-        distances = results.get("distances", [[]])[0]
-
-        retrieved = []
-        for document, metadata, distance in zip(documents, metadatas, distances):
-            retrieved.append(
-                {
-                    "content": document,
-                    "source": metadata.get("source"),
-                    "chunk_index": metadata.get("chunk_index"),
-                    "distance": distance,
-                }
-            )
-
-        return retrieved
-    except Exception as exc:
-        print(f"[RAG WARNING] Search failed or RAG unavailable: {exc}")
-        return []
+    return retrieved
 
 
 # -------------------------------------------------------------------
 # Collection count
 # -------------------------------------------------------------------
 
-def collection_count() -> int:
+def collection_count() -> Optional[int]:
     """
     Return the number of chunks currently stored.
     """
     try:
         return get_chroma_collection().count()
-    except Exception as exc:
-        print(f"[RAG WARNING] Could not get collection count: {exc}")
-        return 0
+    except Exception:
+        return None
 
 
 # -------------------------------------------------------------------
@@ -258,22 +259,30 @@ def collection_count() -> int:
 # -------------------------------------------------------------------
 
 def delete_document_chunks(
-    source: str,
+    source: str = "",
+    vector_ids: Optional[List[str]] = None,
+    document_id: str = "",
 ) -> int:
     """
-    Delete all ChromaDB chunks belonging to a document source.
+    Delete document chunks from ChromaDB.
+    Deletes by exact vector_ids if provided (H2), or document_id, falling back to source metadata.
     """
-    if not source:
+    col = get_chroma_collection()
+    if vector_ids:
+        col.delete(ids=vector_ids)
+        return len(vector_ids)
+    if document_id:
+        results = col.get(where={"document_id": document_id})
+        ids = results.get("ids", [])
+        if ids:
+            col.delete(ids=ids)
+            return len(ids)
         return 0
-
-    try:
-        col = get_chroma_collection()
+    if source:
         results = col.get(where={"source": source})
         ids = results.get("ids", [])
         if not ids:
             return 0
         col.delete(ids=ids)
         return len(ids)
-    except Exception as exc:
-        print(f"[RAG WARNING] Could not delete document chunks for '{source}': {exc}")
-        return 0
+    return 0

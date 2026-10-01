@@ -2,9 +2,7 @@
 Phase 7 verification test suite — Low Priority & Maintainability (L1–L6).
 
 How to run:
-    py -3.12 -m backend.test_phase7_low
-or:
-    pytest backend/test_phase7_low.py
+    py -3.12 -m pytest backend/tests/unit/test_phase7_low.py
 
 What it tests:
     1. L1 — Documentation consistency across READMEs and .env.examples.
@@ -15,17 +13,17 @@ What it tests:
     6. L6 — Conversation list pagination and message exclusion in summaries.
 """
 
-import tempfile
 from pathlib import Path
-from unittest.mock import patch
 from uuid import uuid4
 
+import re
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
 from backend import db, models
 from backend.api_schemas import FeedbackRequest, TicketStatus, TicketStatusUpdate
+from backend.main import app
 from backend.routes import chat, tickets
 
 
@@ -39,16 +37,41 @@ def test_l1_documentation_consistency():
     adk_readme = Path("final_customer_support/README.md").read_text(encoding="utf-8")
     env_example = Path("backend/.env.example").read_text(encoding="utf-8")
 
-    # Verify all phase suites are documented
-    for phase_num in range(1, 8):
-        assert f"test_phase{phase_num}" in root_readme or f"test_phase{phase_num}_" in root_readme
+    env_files = [Path(".env.example"), Path("backend/.env.example"), Path("final_customer_support/.env.example")]
+    names = []
+    for path in env_files:
+        content = path.read_text(encoding="utf-8")
+        names.append(set(re.findall(r"^([A-Z][A-Z0-9_]*)=", content, flags=re.MULTILINE)))
+        assert "ADK_MODEL" not in content
+        assert "JWT_SECRET=" in content and "JWT_SECRET=your_" not in content
+    assert names[0] == names[1] == names[2]
 
-    # Verify no hardcoded secrets exist in example files
-    assert "your_gemini_api_key_here" in env_example
-    assert "your_jwt_secret_min_32_chars_here" in env_example
-
-    # Verify CORS_ORIGINS is documented
-    assert "CORS_ORIGINS" in root_readme
+    for required in (
+        "```mermaid", "## Setup", "## Admin routes", "JWT_SECRET", "32 characters",
+        "10 characters", "## Run tests", "## Data safety", "single-process",
+        "MAX_OUTPUT_TOKENS", "LOGIN_RATE_LIMIT_ATTEMPTS", "LOGIN_RATE_LIMIT_WINDOW_SECONDS",
+        "LOGIN_RATE_LIMIT_IP_ATTEMPTS", "LOGIN_RATE_LIMIT_IP_WINDOW_SECONDS",
+        "SUPPORTAI_DATA_FILE", "SUPPORTAI_FIXTURE_DIR", "SUPPORTAI_RUNTIME_DIR",
+        "backend/data/runtime/db_store.json",
+    ):
+        assert required.lower() in root_readme.lower()
+    assert "final_customer_support_project/" not in root_readme
+    assert not Path("final_customer_support/IMPLEMENTATION_PROGRESS.md").exists()
+    documented_routes = set(re.findall(r"`(GET|POST|PATCH|DELETE) ([^`]+)`", root_readme))
+    routes = []
+    for route in app.routes:
+        routes.append(route)
+        included_router = getattr(route, "original_router", None)
+        if included_router is not None:
+            routes.extend(included_router.routes)
+    registered_routes = {
+        (method, route.path)
+        for route in routes
+        if getattr(route, "path", None)
+        for method in (getattr(route, "methods", None) or set())
+    }
+    assert documented_routes
+    assert documented_routes <= registered_routes, documented_routes - registered_routes
     assert "CORS_ORIGINS" in env_example
     print("  [OK] Documentation across READMEs and .env.example is consistent and safe.")
 
@@ -58,34 +81,19 @@ def test_l1_documentation_consistency():
 # ============================================================================
 
 def test_l2_dead_code_and_case_id_uniqueness():
-    print("Testing L2 — Dead code cleanups, carrier agent, and case ID uniqueness...")
-    # Verify carrier agent is preserved in agent.py
+    print("Testing L2 — Dead agent and integration cleanup...")
     agent_code = Path("final_customer_support/agent.py").read_text(encoding="utf-8")
-    assert "carrier_investigation_agent" in agent_code
-    assert "start_carrier_investigation" in agent_code
-
-    # Verify case ID collision resistance with UUID suffixes
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_path = Path(tmpdir)
-        cases_file = tmp_path / "support_cases.json"
-        cases_file.write_text("{}", encoding="utf-8")
-
-        from final_customer_support import mcp_server, openapi_server
-        with patch.object(mcp_server, "DATA_DIR", tmp_path):
-            case1 = mcp_server.create_support_case_mcp("CUST-1", "ORD-1", "Issue 1")
-            case2 = mcp_server.create_support_case_mcp("CUST-2", "ORD-2", "Issue 2")
-            assert case1["case_id"] != case2["case_id"], "MCP case IDs must be unique"
-
-        with patch.object(openapi_server, "DATA", tmp_path):
-            case3 = openapi_server.support_case({"customer_id": "CUST-3", "order_id": "ORD-3", "issue": "Issue 3"})
-            case4 = openapi_server.support_case({"customer_id": "CUST-4", "order_id": "ORD-4", "issue": "Issue 4"})
-            assert case3["case_id"] != case4["case_id"], "OpenAPI case IDs must be unique"
+    assert "mcp_specialist" not in agent_code
+    assert "carrier_investigation_agent" not in agent_code
+    assert "openapi_agent" not in agent_code
+    assert '"policy_advisor_tool": AgentTool' in agent_code
+    assert not Path("final_customer_support/openapi.yaml").exists()
 
     # Verify unused imports removed from db.py
     db_code = Path("backend/db.py").read_text(encoding="utf-8")
     assert "from typing import Optional" not in db_code
     assert "from pymongo.database import Database" not in db_code
-    print("  [OK] Carrier workflow preserved, case IDs collision-resistant, dead code removed.")
+    print("  [OK] Unused agents removed and policy advisor remains wired.")
 
 
 # ============================================================================
@@ -196,14 +204,16 @@ def test_l5_api_configuration():
     admin_js = Path("frontend/admin/app.js").read_text(encoding="utf-8")
 
     # Check customer app.js
-    assert "window.API_BASE_URL" in customer_js
-    assert "localStorage.getItem(\"api_base_url\")" in customer_js
-    assert "\"http://127.0.0.1:8000\"" in customer_js
+    assert "window.API_BASE_URL" not in customer_js
+    assert "localStorage.getItem(\"api_base_url\")" not in customer_js
+    assert "\"http://127.0.0.1:8000\"" not in customer_js
+    assert '../shared/config.js' in Path("frontend/customer/index.html").read_text(encoding="utf-8")
 
     # Check admin app.js
-    assert "window.API_BASE_URL" in admin_js
-    assert "localStorage.getItem(\"api_base_url\")" in admin_js
-    assert "\"http://127.0.0.1:8000\"" in admin_js
+    assert "window.API_BASE_URL" not in admin_js
+    assert "localStorage.getItem(\"api_base_url\")" not in admin_js
+    assert "\"http://127.0.0.1:8000\"" not in admin_js
+    assert '../shared/config.js' in Path("frontend/admin/index.html").read_text(encoding="utf-8")
     print("  [OK] Both frontends support dynamic API base URLs with safe defaults.")
 
 
@@ -258,6 +268,23 @@ def test_l6_pagination_and_conversation_loading():
 
 
 # ============================================================================
+# N8 — Local file store limitation
+# ============================================================================
+
+def test_n8_single_process_store_limit_documented():
+    readme = Path("README.md").read_text(encoding="utf-8").lower()
+    assert "backend/data/runtime/db_store.json" in readme
+    assert "one python process" in readme
+    assert "stop the api before using" in readme
+
+
+def test_f6_copy_button_builder_is_shared_by_both_message_types():
+    script = Path("frontend/customer/app.js").read_text(encoding="utf-8")
+    assert script.count("function createCopyButton(") == 1
+    assert script.count("const copyButton = createCopyButton(text);") == 2
+
+
+# ============================================================================
 # Run all tests directly
 # ============================================================================
 
@@ -271,6 +298,7 @@ if __name__ == "__main__":
     test_l4_customer_feedback()
     test_l5_api_configuration()
     test_l6_pagination_and_conversation_loading()
+    test_n8_single_process_store_limit_documented()
     print("=" * 60)
     print("ALL PHASE 7 (L1–L6) TESTS PASSED SUCCESSFULLY!")
     print("=" * 60 + "\n")

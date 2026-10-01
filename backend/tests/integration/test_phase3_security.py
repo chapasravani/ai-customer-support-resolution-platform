@@ -19,6 +19,9 @@ client = TestClient(app)
 
 def test_c1_admin_registration_blocked():
     """C1: Verify public /auth/register rejects role='admin' and only creates customers."""
+    db.get_db().users.delete_one({"email": "hacker_admin@example.com"})
+    db.get_db().users.delete_one({"email": "legit_customer@example.com"})
+
     # Attempt admin registration
     resp = client.post(
         "/auth/register",
@@ -42,8 +45,8 @@ def test_c1_admin_registration_blocked():
             "name": "Legit Customer",
         },
     )
-    assert resp_cust.status_code == 200
-    assert resp_cust.json()["role"] == "customer"
+    assert resp_cust.status_code == 202
+    assert resp_cust.json() == {"detail": "If this email can be registered, you can now log in."}
 
     # Cleanup
     db.get_db().users.delete_one({"email": customer_email})
@@ -57,7 +60,7 @@ def test_c2_customer_order_ownership():
     res_cross = business_actions.create_refund_request(
         order_id="ORD123",
         reason="customer request",
-        customer_id="C102",
+        tool_context=SimpleNamespace(state={"authenticated_customer_id": "C102", "authenticated_user_role": "customer"}),
     )
     assert res_cross.get("status") == "rejected"
     assert "Ownership verification failed" in res_cross.get("reason", "")
@@ -67,7 +70,7 @@ def test_c2_customer_order_ownership():
     res_own = business_actions.create_refund_request(
         order_id="ORD123",
         reason="customer request",
-        customer_id="C101",
+        tool_context=SimpleNamespace(state={"authenticated_customer_id": "C101", "authenticated_user_role": "customer"}),
     )
     assert res_own.get("status") in ("pending_human_approval", "created", "already_requested")
 
@@ -110,9 +113,9 @@ def test_c2_customer_order_ownership():
 
 def test_c7_jwt_secret_security():
     """C7: Verify JWT secret validation and failure handling."""
-    # 1. Normal configured secret works
+    # 1. Normal configured secret works and must be >= 32 chars
     secret = auth.get_jwt_secret()
-    assert len(secret) >= 16
+    assert len(secret) >= 32
 
     # 2. Missing secret raises RuntimeError
     old_secret = os.environ.get("JWT_SECRET")
@@ -124,21 +127,27 @@ def test_c7_jwt_secret_security():
         except RuntimeError as exc:
             assert "JWT_SECRET is not configured" in str(exc)
 
-        # 3. Insecure default in production raises RuntimeError
+        # 3. Insecure default placeholder raises RuntimeError in any environment
         os.environ["JWT_SECRET"] = "dev-only-secret-change-me"
-        os.environ["APP_ENV"] = "production"
         try:
             auth.get_jwt_secret()
-            assert False, "Should have raised RuntimeError for insecure secret in production"
+            assert False, "Should have raised RuntimeError for placeholder secret"
         except RuntimeError as exc:
-            assert "cannot be used in a production environment" in str(exc)
+            assert "Insecure or placeholder JWT_SECRET" in str(exc)
+
+        # 4. Short secret (< 32 chars) raises RuntimeError
+        os.environ["JWT_SECRET"] = "too-short-secret"
+        try:
+            auth.get_jwt_secret()
+            assert False, "Should have raised RuntimeError for short secret"
+        except RuntimeError as exc:
+            assert "Insecure or placeholder JWT_SECRET" in str(exc)
 
     finally:
         if old_secret is not None:
             os.environ["JWT_SECRET"] = old_secret
         else:
             os.environ.pop("JWT_SECRET", None)
-        os.environ.pop("APP_ENV", None)
 
 
 if __name__ == "__main__":

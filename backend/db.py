@@ -11,16 +11,19 @@ import os
 import tempfile
 import threading
 from pathlib import Path
+from typing import Any
 from bson import json_util
 from dotenv import load_dotenv
 from pymongo import MongoClient
 
-# Load backend/.env if it exists. override=True ensures local .env settings
-# take precedence over any stale process/shell environment variables.
-load_dotenv(Path(__file__).parent / ".env", override=True)
+# Load backend/.env if it exists. override=False ensures deployment/CI
+# environment variables take precedence over local .env files (N7).
+load_dotenv(Path(__file__).parent / ".env", override=False)
 
 MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017").strip().strip("\"'")
 MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "customer_support").strip().strip("\"'")
+
+_APP_COLLECTIONS = ["users", "conversations", "tickets", "documents", "chat_requests"]
 
 def get_data_file() -> Path:
     custom = os.getenv("SUPPORTAI_DATA_FILE")
@@ -28,7 +31,7 @@ def get_data_file() -> Path:
         p = Path(custom)
         p.parent.mkdir(parents=True, exist_ok=True)
         return p
-    default_p = Path(__file__).parent / "data" / "db_store.json"
+    default_p = Path(__file__).parent / "data" / "runtime" / "db_store.json"
     default_p.parent.mkdir(parents=True, exist_ok=True)
     return default_p
 
@@ -36,6 +39,10 @@ def get_data_file() -> Path:
 DATA_FILE = get_data_file()
 
 # Thread-safe reentrant lock protecting local fallback reads, writes, and syncs
+# NOTE (N8): This lock coordinates threads within a single Python process.
+# In-process mongomock does not provide cross-process coordination across independent
+# CLI utilities and API workers. For multi-process or production deployments, configure
+# real MongoDB via MONGODB_URI.
 _db_lock = threading.RLock()
 
 
@@ -52,9 +59,12 @@ def _ensure_indexes_on_db(target_db) -> None:
     target_db.tickets.create_index([("status", 1)])
     target_db.tickets.create_index("ticket_id", unique=True)
     target_db.tickets.create_index([("conversation_id", 1)])
+    target_db.tickets.create_index("active_ticket_key", unique=True, sparse=True)
 
     # The admin documents page needs "documents by status" (processing/indexed/failed).
     target_db.documents.create_index([("status", 1)])
+
+    target_db.chat_requests.create_index([("user_id", 1), ("request_id", 1)], unique=True)
 
 
 class PersistentCollection:
@@ -109,7 +119,7 @@ class PersistentDatabase:
                                 f"Corrupted or unparseable persistent database file detected at '{data_file}': {parse_err}"
                             ) from parse_err
 
-                        for col_name in ["users", "conversations", "tickets", "documents"]:
+                        for col_name in _APP_COLLECTIONS:
                             self._db[col_name].drop()
                             docs = data.get(col_name, [])
                             if docs:
@@ -131,7 +141,7 @@ class PersistentDatabase:
             try:
                 data = {
                     col: list(self._db[col].find())
-                    for col in ["users", "conversations", "tickets", "documents"]
+                    for col in _APP_COLLECTIONS
                 }
                 serialized = json_util.dumps(data, indent=2)
 
@@ -163,7 +173,7 @@ class PersistentDatabase:
         return PersistentCollection(self._db[name], lambda: self)
 
     def __getattr__(self, name):
-        if name in ("users", "conversations", "tickets", "documents"):
+        if name in _APP_COLLECTIONS:
             return self[name]
         return getattr(self._db, name)
 
@@ -203,7 +213,7 @@ def set_local_mode() -> None:
     _using_mock = True
 
 
-def get_client():
+def get_client() -> Any:
     """Return a shared MongoClient, creating it on first use with persistent fallback."""
     global _client, _using_mock
     if _client is None:
@@ -225,7 +235,7 @@ def get_client():
     return _client
 
 
-def get_db():
+def get_db() -> Any:
     """Return the application's database (all 4 collections live in here)."""
     return get_client()[MONGODB_DB_NAME]
 

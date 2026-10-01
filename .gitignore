@@ -17,10 +17,13 @@ env/
 .env.*
 !.env.example
 *.bak
+meta_cred.md
 
 # Database and Storage
 chroma_db/
 backend/data/
+final_customer_support/data/runtime/
+.venv-task1/
 *.sqlite
 *.db
 

@@ -11,8 +11,9 @@ ADK bridge are built in later phases.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from uuid import uuid4
 
 from bson import ObjectId
 from bson.errors import InvalidId
@@ -46,17 +47,6 @@ def create_user(email: str, hashed_password: str, name: str, role: str = "custom
     import a hashing library.
     """
     clean_email = email.lower().strip()
-    if not customer_id and role == "customer":
-        try:
-            from final_customer_support.tools.business_actions import _load
-            customers = _load("customers.json")
-            for cid, cdata in customers.items():
-                if (cdata.get("email") or "").lower().strip() == clean_email:
-                    customer_id = cid
-                    break
-        except Exception:
-            pass
-
     doc = {
         "email": clean_email,
         "hashed_password": hashed_password,
@@ -75,32 +65,18 @@ def create_user(email: str, hashed_password: str, name: str, role: str = "custom
 def get_customer_id_for_user(user: dict) -> str:
     """
     Return the customer_id associated with a user.
-    Checks user document, then matches by email against customers.json,
-    or generates a consistent customer ID for newly registered users.
+    Uses existing explicit customer_id if set, or generates a consistent,
+    collision-resistant customer ID based on the complete user _id (N4).
+    Never links automatically via unverified email (N1).
     """
     if not user:
         return ""
     if user.get("customer_id"):
         return user["customer_id"]
 
-    email = (user.get("email") or "").lower().strip()
-    if email:
-        try:
-            from final_customer_support.tools.business_actions import _load
-            customers = _load("customers.json")
-            for cid, cdata in customers.items():
-                if (cdata.get("email") or "").lower().strip() == email:
-                    user_id = user.get("_id")
-                    if user_id:
-                        get_db().users.update_one({"_id": user_id}, {"$set": {"customer_id": cid}})
-                    user["customer_id"] = cid
-                    return cid
-        except Exception:
-            pass
-
-    user_id_str = str(user.get("_id", "unknown"))
-    cid = f"C_{user_id_str[:6]}"
     user_id = user.get("_id")
+    user_id_str = str(user_id or "unknown")
+    cid = f"C_{user_id_str}"
     if user_id:
         try:
             get_db().users.update_one({"_id": user_id}, {"$set": {"customer_id": cid}})
@@ -164,7 +140,7 @@ def create_conversation(user_id: str) -> dict:
     return doc
 
 
-def add_message(conversation_id: str, role: str, content: str) -> Optional[dict]:
+def add_message(conversation_id: str, role: str, content: str, request_id: str = "") -> Optional[dict]:
     """
     Append one message (role is 'user' or 'assistant') to an existing
     conversation and bump its updated_at timestamp so it moves to the
@@ -174,7 +150,9 @@ def add_message(conversation_id: str, role: str, content: str) -> Optional[dict]
     if not oid:
         return None
 
-    message = {"role": role, "content": content, "timestamp": _now()}
+    message = {"id": uuid4().hex, "role": role, "content": content, "timestamp": _now()}
+    if request_id:
+        message["request_id"] = request_id
 
     update = {
         "$push": {"messages": message},
@@ -204,6 +182,76 @@ def add_message(conversation_id: str, role: str, content: str) -> Optional[dict]
         update,
     )
     return message
+
+
+def set_message_failed(conversation_id: str, message_id: str, failed: bool) -> bool:
+    oid = _oid(conversation_id)
+    if not oid:
+        return False
+    result = get_db().conversations.update_one(
+        {"_id": oid, "messages.id": message_id},
+        {"$set": {"messages.$.failed": failed}},
+    )
+    return result.matched_count > 0
+
+
+def claim_chat_request(user_id: str, request_id: str, conversation_id: str = "") -> tuple[str, dict]:
+    """Atomically claim an idempotency key scoped to its authenticated user."""
+    from pymongo.errors import DuplicateKeyError
+    from pymongo import ReturnDocument
+
+    collection = get_db().chat_requests
+    collection.create_index([("user_id", 1), ("request_id", 1)], unique=True)
+    record = {
+        "user_id": _oid(user_id) or user_id,
+        "request_id": request_id,
+        "conversation_id": conversation_id,
+        "status": "in_progress",
+        "response": "",
+        "created_at": _now(),
+    }
+    try:
+        result = collection.insert_one(record)
+        record["_id"] = result.inserted_id
+        return "claimed", record
+    except DuplicateKeyError:
+        key = {"user_id": record["user_id"], "request_id": request_id}
+        existing = collection.find_one(key)
+        if existing.get("status") == "done":
+            return "done", existing
+        if existing.get("status") == "in_progress":
+            created_at = existing.get("created_at")
+            comparable_created_at = created_at
+            if isinstance(comparable_created_at, datetime) and comparable_created_at.tzinfo is None:
+                comparable_created_at = comparable_created_at.replace(tzinfo=timezone.utc)
+            if not isinstance(comparable_created_at, datetime) or comparable_created_at >= _now() - timedelta(minutes=5):
+                return "in_progress", existing
+            stale = collection.find_one_and_update(
+                {**key, "status": "in_progress", "created_at": created_at},
+                {"$set": {"status": "failed"}},
+                return_document=ReturnDocument.AFTER,
+            )
+            if not stale:
+                return "in_progress", collection.find_one(key)
+        retried = collection.find_one_and_update(
+            {**key, "status": "failed"},
+            {"$set": {"status": "in_progress"}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if retried:
+            return "retry", retried
+        return "in_progress", collection.find_one(key)
+
+
+def update_chat_request(user_id: str, request_id: str, status: str, response: str = "", conversation_id: str = "") -> bool:
+    key = {"user_id": _oid(user_id) or user_id, "request_id": request_id}
+    update = {"status": status}
+    if response:
+        update["response"] = response
+    if conversation_id:
+        update["conversation_id"] = conversation_id
+    result = get_db().chat_requests.update_one(key, {"$set": update})
+    return result.matched_count > 0
 
 
 def rename_conversation(conversation_id: str, title: str) -> bool:
@@ -309,9 +357,8 @@ def create_ticket(
     """
     `ticket_id` is a human-friendly identifier. In later phases this will
     usually be the same reference tools/business_actions.py already
-    generates today (e.g. "CASE-20260922-AB12CD"), so a Mongo ticket and
-    the existing JSON-based action log stay traceable to the same event.
-    See Decision B in IMPLEMENTATION_PROGRESS.md for why it works this way.
+    generates today (e.g. "CASE-20260922-AB12CD"). MongoDB is the ticket
+    system of record for API-created tickets; action records stay separate.
     """
     doc = {
         "ticket_id": ticket_id,
@@ -326,6 +373,8 @@ def create_ticket(
         "created_at": _now(),
         "updated_at": _now(),
     }
+    if doc["conversation_id"] and status in {"open", "in_progress"}:
+        doc["active_ticket_key"] = str(doc["conversation_id"])
     result = get_db().tickets.insert_one(doc)
     doc["_id"] = result.inserted_id
     return doc
@@ -337,10 +386,19 @@ def get_ticket(ticket_id: str) -> Optional[dict]:
 
 
 def update_ticket_status(ticket_id: str, status: str, resolution_summary: str = "") -> bool:
+    ticket = get_ticket(ticket_id)
+    if not ticket:
+        return False
     update: dict[str, Any] = {"status": status, "updated_at": _now()}
     if resolution_summary:
         update["resolution_summary"] = resolution_summary
-    result = get_db().tickets.update_one({"ticket_id": ticket_id}, {"$set": update})
+    conversation_id = ticket.get("conversation_id")
+    if status in {"open", "in_progress"} and conversation_id:
+        update["active_ticket_key"] = str(conversation_id)
+        changes = {"$set": update}
+    else:
+        changes = {"$set": update, "$unset": {"active_ticket_key": ""}}
+    result = get_db().tickets.update_one({"ticket_id": ticket_id}, changes)
     return result.matched_count > 0
 
 
@@ -350,7 +408,55 @@ def get_ticket_for_conversation(conversation_id: str) -> Optional[dict]:
     if not oid and not conversation_id:
         return None
     query = {"$or": [{"conversation_id": oid}, {"conversation_id": str(conversation_id)}]} if oid else {"conversation_id": str(conversation_id)}
-    return get_db().tickets.find_one(query)
+    query["status"] = {"$in": ["open", "in_progress"]}
+    return get_db().tickets.find_one(query, sort=[("created_at", -1)])
+
+
+def find_or_create_open_ticket(
+    ticket_id: str,
+    user_id: str,
+    issue: str,
+    order_id: str,
+    conversation_id: str,
+    source_reference: str = "",
+) -> dict:
+    """Atomically reuse an active ticket or create the conversation's open ticket."""
+    from pymongo import ReturnDocument
+
+    oid = _oid(conversation_id)
+    query = {"conversation_id": oid or conversation_id, "status": {"$in": ["open", "in_progress"]}}
+    doc = {
+        "ticket_id": ticket_id,
+        "user_id": _oid(user_id) or user_id,
+        "conversation_id": oid or conversation_id,
+        "active_ticket_key": str(oid or conversation_id),
+        "order_id": order_id,
+        "issue": issue,
+        "status": "open",
+        "priority": "medium",
+        "resolution_summary": "",
+        "source_reference": source_reference,
+        "created_at": _now(),
+        "updated_at": _now(),
+    }
+    tickets = get_db().tickets
+    try:
+        return tickets.find_one_and_update(
+            query,
+            {"$setOnInsert": doc},
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+    except Exception as exc:
+        from pymongo.errors import DuplicateKeyError
+
+        if not isinstance(exc, DuplicateKeyError):
+            raise
+        # A concurrent upsert may win the unique active-ticket key race.
+        existing = tickets.find_one(query, sort=[("created_at", -1)])
+        if existing:
+            return existing
+        raise
 
 
 def update_ticket_issue(ticket_id: str, issue: str, order_id: str = "") -> bool:
