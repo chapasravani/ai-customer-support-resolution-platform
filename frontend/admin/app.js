@@ -1,4 +1,4 @@
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE = window.SUPPORTAI_CONFIG.API_URL.replace(/\/+$/, "");
 
 const state = {
     token: localStorage.getItem("admin_token"),
@@ -21,6 +21,24 @@ const loginForm =
 
 const loginError =
     document.getElementById("login-error");
+
+const passwordInput =
+    document.getElementById("password");
+
+const adminPasswordToggle =
+    document.getElementById("adminPasswordToggle");
+
+const adminHelpBtn =
+    document.getElementById("adminHelpBtn");
+
+const adminHelpModal =
+    document.getElementById("adminHelpModal");
+
+const closeAdminHelpModal =
+    document.getElementById("closeAdminHelpModal");
+
+const adminHelpBackBtn =
+    document.getElementById("adminHelpBackBtn");
 
 const adminName =
     document.getElementById("admin-name");
@@ -114,61 +132,53 @@ async function apiRequest(
     endpoint,
     options = {}
 ) {
-
     const headers = {
         ...(options.headers || {})
     };
 
-
     if (state.token) {
-
         headers.Authorization =
             `Bearer ${state.token}`;
     }
 
-
-    const response =
-        await fetch(
+    let response;
+    try {
+        response = await fetch(
             `${API_BASE}${endpoint}`,
             {
                 ...options,
                 headers
             }
         );
-
+    } catch (netErr) {
+        throw new Error(
+            `Unable to connect to the backend server at ${API_BASE}. Please ensure the server is running.`
+        );
+    }
 
     let data = null;
-
     try {
-
-        data =
-            await response.json();
-
+        data = await response.json();
     } catch {
-
         data = null;
     }
 
-
     if (!response.ok) {
-
-        if (
-            response.status === 401 ||
-            response.status === 403
-        ) {
-
+        if (response.status === 401) {
             logout();
         }
 
-
-        const message =
-            data?.detail ||
-            `Request failed with status ${response.status}`;
-
+        let message = `Request failed with status ${response.status}`;
+        if (typeof data?.detail === "string") {
+            message = data.detail;
+        } else if (Array.isArray(data?.detail) && data.detail.length > 0) {
+            message = data.detail[0]?.msg || message;
+        } else if (response.status === 403) {
+            message = "Access denied: You do not have permission to perform this action.";
+        }
 
         throw new Error(message);
     }
-
 
     return data;
 }
@@ -179,127 +189,192 @@ async function apiRequest(
 // ============================================================
 
 if (loginForm) {
-
     loginForm.addEventListener(
         "submit",
         async (event) => {
-
             event.preventDefault();
-
             setLoginError("");
 
+            const emailInput = document.getElementById("email");
+            const passInput = document.getElementById("password");
+            const email = (emailInput?.value || "").trim();
+            const password = passInput?.value || "";
 
-            const email =
-                document
-                    .getElementById("email")
-                    .value
-                    .trim();
+            const loginButton = document.getElementById("login-button");
 
+            if (!email || !password) {
+                setLoginError("Please enter your administrator email and password.");
+                return;
+            }
 
-            const password =
-                document
-                    .getElementById("password")
-                    .value;
-
-
-            const loginButton =
-                document.getElementById(
-                    "login-button"
-                );
-
-
-            loginButton.disabled = true;
-
-            loginButton.textContent =
-                "Signing in...";
-
+            if (loginButton) {
+                loginButton.disabled = true;
+                loginButton.innerHTML = "<span>Signing into Dashboard...</span>";
+            }
 
             try {
-
-                const response =
-                    await fetch(
+                let response;
+                try {
+                    response = await fetch(
                         `${API_BASE}/auth/login`,
                         {
                             method: "POST",
-
                             headers: {
-                                "Content-Type":
-                                    "application/json",
+                                "Content-Type": "application/json",
                             },
-
                             body: JSON.stringify({
                                 email,
                                 password,
                             }),
                         }
                     );
-
-
-                const data =
-                    await response.json();
-
-
-                if (!response.ok) {
-
+                } catch (netErr) {
                     throw new Error(
-                        data?.detail ||
-                        "Login failed."
+                        `Unable to connect to the backend server at ${API_BASE}. Please ensure the backend is running.`
                     );
                 }
 
+                let data = null;
+                try {
+                    data = await response.json();
+                } catch {
+                    data = null;
+                }
 
-                state.token =
-                    data.access_token;
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        throw new Error(
+                            (typeof data?.detail === "string" && data.detail) ||
+                            "Incorrect email or password."
+                        );
+                    }
+                    if (response.status === 403) {
+                        throw new Error(
+                            (typeof data?.detail === "string" && data.detail) ||
+                            "Access denied: This account does not have administrator privileges."
+                        );
+                    }
+                    if (response.status === 422) {
+                        let msg = "Invalid input format. Please check your email and password.";
+                        if (Array.isArray(data?.detail) && data.detail.length > 0) {
+                            msg = data.detail[0]?.msg || msg;
+                        } else if (typeof data?.detail === "string") {
+                            msg = data.detail;
+                        }
+                        throw new Error(msg);
+                    }
+                    if (response.status === 429) {
+                        throw new Error(
+                            (typeof data?.detail === "string" && data.detail) ||
+                            "Too many requests. Please wait a moment and try again."
+                        );
+                    }
+                    if (response.status >= 500) {
+                        throw new Error(
+                            "The server encountered an internal error. Please try again later."
+                        );
+                    }
+                    throw new Error(
+                        (typeof data?.detail === "string" && data.detail) ||
+                        `Sign in failed (HTTP ${response.status}).`
+                    );
+                }
 
+                if (!data || !data.access_token) {
+                    throw new Error("Invalid response received from authentication server.");
+                }
 
-                localStorage.setItem(
-                    "admin_token",
-                    state.token
-                );
+                if (data.role && data.role !== "admin") {
+                    throw new Error("This account does not have administrator access.");
+                }
 
+                state.token = data.access_token;
+                localStorage.setItem("admin_token", state.token);
 
                 await loadCurrentUser();
 
-
-                if (
-                    state.user.role !==
-                    "admin"
-                ) {
-
+                if (state.user && state.user.role !== "admin") {
                     logout();
-
-                    throw new Error(
-                        "This account does not have admin access."
-                    );
+                    throw new Error("This account does not have administrator access.");
                 }
-
 
                 showDashboard();
 
-
                 await loadDocuments();
-
                 await loadSupportCases();
 
-
             } catch (error) {
-
                 setLoginError(
-                    error.message ||
-                    "Unable to sign in."
+                    error.message || "Unable to sign in. Please verify your credentials."
                 );
-
-
             } finally {
-
-                loginButton.disabled = false;
-
-                loginButton.textContent =
-                    "Sign in";
+                if (loginButton) {
+                    loginButton.disabled = false;
+                    loginButton.innerHTML = '<span>Sign into Dashboard</span><span class="btn-arrow">→</span>';
+                }
             }
         }
     );
 }
+
+
+// ============================================================
+// PASSWORD VISIBILITY & RECOVERY CONTROLS
+// ============================================================
+
+if (adminPasswordToggle && passwordInput) {
+    adminPasswordToggle.addEventListener("click", (e) => {
+        e.preventDefault();
+        const isPassword = passwordInput.type === "password";
+        passwordInput.type = isPassword ? "text" : "password";
+        adminPasswordToggle.setAttribute("aria-label", isPassword ? "Hide password" : "Show password");
+        adminPasswordToggle.setAttribute("title", isPassword ? "Hide password" : "Show password");
+        const eyeOpen = adminPasswordToggle.querySelector(".eye-open");
+        const eyeClosed = adminPasswordToggle.querySelector(".eye-closed");
+        if (eyeOpen && eyeClosed) {
+            eyeOpen.classList.toggle("hidden", isPassword);
+            eyeClosed.classList.toggle("hidden", !isPassword);
+        }
+    });
+}
+
+function openAdminHelpModal() {
+    if (adminHelpModal) {
+        adminHelpModal.classList.remove("hidden");
+    }
+}
+
+function closeAdminHelp() {
+    if (adminHelpModal) {
+        adminHelpModal.classList.add("hidden");
+    }
+}
+
+if (adminHelpBtn) {
+    adminHelpBtn.addEventListener("click", openAdminHelpModal);
+}
+
+if (closeAdminHelpModal) {
+    closeAdminHelpModal.addEventListener("click", closeAdminHelp);
+}
+
+if (adminHelpBackBtn) {
+    adminHelpBackBtn.addEventListener("click", closeAdminHelp);
+}
+
+if (adminHelpModal) {
+    adminHelpModal.addEventListener("click", (e) => {
+        if (e.target === adminHelpModal) {
+            closeAdminHelp();
+        }
+    });
+}
+
+document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && adminHelpModal && !adminHelpModal.classList.contains("hidden")) {
+        closeAdminHelp();
+    }
+});
 
 
 // ============================================================
@@ -460,9 +535,9 @@ function renderDocuments(documents) {
 
                                 <button
                                     class="delete-button"
-                                    onclick="deleteDocument('${escapeHtml(
+                                    data-document-id="${escapeHtml(
                                         document.id
-                                    )}')"
+                                    )}"
                                 >
                                     Delete
                                 </button>
@@ -474,6 +549,16 @@ function renderDocuments(documents) {
                 }
             )
             .join("");
+
+    if (documentsBody && !documentsBody.dataset.listenerBound) {
+        documentsBody.dataset.listenerBound = "true";
+        documentsBody.addEventListener("click", (event) => {
+            const btn = event.target.closest(".delete-button");
+            if (btn && btn.dataset.documentId) {
+                deleteDocument(btn.dataset.documentId);
+            }
+        });
+    }
 }
 
 
@@ -784,58 +869,17 @@ function renderSupportCases(tickets) {
                                     class="case-status-select"
                                     id="case-status-${encodedTicketId}"
                                 >
-
-                                    <option
-                                        value="open"
-                                        ${
-                                            status ===
-                                            "open"
-                                                ? "selected"
-                                                : ""
-                                        }
-                                    >
-                                        Open
-                                    </option>
-
-
-                                    <option
-                                        value="investigating"
-                                        ${
-                                            status ===
-                                            "investigating"
-                                                ? "selected"
-                                                : ""
-                                        }
-                                    >
-                                        Investigating
-                                    </option>
-
-
-                                    <option
-                                        value="escalated"
-                                        ${
-                                            status ===
-                                            "escalated"
-                                                ? "selected"
-                                                : ""
-                                        }
-                                    >
-                                        Escalated
-                                    </option>
-
-
-                                    <option
-                                        value="resolved"
-                                        ${
-                                            status ===
-                                            "resolved"
-                                                ? "selected"
-                                                : ""
-                                        }
-                                    >
-                                        Resolved
-                                    </option>
-
+                                    <option value="open" ${status === "open" ? "selected" : ""}>Open</option>
+                                    <option value="investigating" ${status === "investigating" ? "selected" : ""}>Investigating</option>
+                                    <option value="in_progress" ${status === "in_progress" ? "selected" : ""}>In Progress</option>
+                                    <option value="escalated" ${status === "escalated" ? "selected" : ""}>Escalated</option>
+                                    <option value="resolved" ${status === "resolved" ? "selected" : ""}>Resolved</option>
+                                    <option value="closed" ${status === "closed" ? "selected" : ""}>Closed</option>
+                                    ${
+                                        !["open", "investigating", "in_progress", "escalated", "resolved", "closed"].includes(status)
+                                            ? `<option value="${escapeHtml(status)}" selected>${escapeHtml(status)}</option>`
+                                            : ""
+                                    }
                                 </select>
 
                             </td>
@@ -845,7 +889,7 @@ function renderSupportCases(tickets) {
 
                                 <button
                                     class="case-update-button"
-                                    onclick="updateSupportCase('${encodedTicketId}')"
+                                    data-ticket-id="${encodedTicketId}"
                                 >
                                     Update
                                 </button>
@@ -857,6 +901,16 @@ function renderSupportCases(tickets) {
                 }
             )
             .join("");
+
+    if (casesBody && !casesBody.dataset.listenerBound) {
+        casesBody.dataset.listenerBound = "true";
+        casesBody.addEventListener("click", (event) => {
+            const btn = event.target.closest(".case-update-button");
+            if (btn && btn.dataset.ticketId) {
+                updateSupportCase(decodeURIComponent(btn.dataset.ticketId));
+            }
+        });
+    }
 }
 
 
@@ -997,13 +1051,14 @@ async function initialize() {
         await loadCurrentUser();
 
 
-        if (
-            state.user.role !==
-            "admin"
-        ) {
-
+        if (!state.user || state.user.role !== "admin") {
+            const isCustomer = state.user && state.user.role === "customer";
             logout();
-
+            if (isCustomer) {
+                window.location.replace("../demo-customer/");
+                return;
+            }
+            setLoginError("Access denied: This account does not have administrator access.");
             return;
         }
 
@@ -1040,7 +1095,7 @@ if (closeAuthModal) {
         function () {
 
             window.location.href =
-                "../customer/";
+                "../demo-customer/";
         }
     );
 }
