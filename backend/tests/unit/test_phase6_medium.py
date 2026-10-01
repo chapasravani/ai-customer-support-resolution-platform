@@ -28,13 +28,13 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from backend.api_schemas import (
+from backend.app.api.schemas import (
     ChatMessageRequest,
     TicketStatus,
     TicketStatusUpdate,
 )
-from backend.rag.context import retrieve_support_context
-from backend.routes import chat, documents
+from backend.app.rag.context import retrieve_support_context
+from backend.app.api.routes import chat, documents
 
 
 # ============================================================================
@@ -64,16 +64,16 @@ def test_m1_ticket_status_validation():
 def test_m2_cors_security():
     print("Testing M2 — CORS security configuration...")
     # Verify .env.example contains CORS_ORIGINS
-    env_example = Path("backend/.env.example").read_text(encoding="utf-8")
-    assert "CORS_ORIGINS=" in env_example, "backend/.env.example must document CORS_ORIGINS"
+    env_example = Path(".env.example").read_text(encoding="utf-8")
+    assert "CORS_ORIGINS=" in env_example, ".env.example must document CORS_ORIGINS"
 
     # Test origin parsing logic
     test_env = "http://example.com, https://app.example.com "
     parsed = [orig.strip() for orig in test_env.split(",") if orig.strip()]
     assert parsed == ["http://example.com", "https://app.example.com"]
 
-    # Verify default allowed origins in backend/main.py
-    import backend.main as main_mod
+    # Verify default allowed origins in backend/app/main.py
+    import backend.app.main as main_mod
     assert hasattr(main_mod, "allowed_origins")
     assert "http://localhost:3000" in main_mod.allowed_origins
     assert "http://localhost:8000" in main_mod.allowed_origins
@@ -161,7 +161,7 @@ def test_m4_document_upload_reliability():
 def test_m5_rag_untrusted_boundaries():
     print("Testing M5 — RAG untrusted document boundaries...")
     # Empty search results
-    with patch("backend.rag.context.search_documents", return_value=[]):
+    with patch("backend.app.rag.context.search_documents", return_value=[]):
         ctx_empty = retrieve_support_context("return policy")
         assert ctx_empty == "No relevant support-policy information was found."
 
@@ -170,7 +170,7 @@ def test_m5_rag_untrusted_boundaries():
         {"source": "policy.md", "content": "Refunds are processed within 14 days."},
         {"source": "rules.txt", "content": "Admins must approve cancellations over $100."},
     ]
-    with patch("backend.rag.context.search_documents", return_value=mock_chunks):
+    with patch("backend.app.rag.context.search_documents", return_value=mock_chunks):
         ctx = retrieve_support_context("refund rules")
         assert "IMPORTANT SECURITY NOTICE FOR AGENTS:" in ctx
         assert "=== BEGIN UNTRUSTED_DOCUMENT (Index: 1, Source: policy.md) ===" in ctx
@@ -180,7 +180,7 @@ def test_m5_rag_untrusted_boundaries():
         assert "=== END UNTRUSTED_DOCUMENT (Index: 2) ===" in ctx
 
     # Verify agent instructions include untrusted document safety rule
-    agent_code = Path("final_customer_support/agent.py").read_text(encoding="utf-8")
+    agent_code = Path("backend/app/workflows/support_agent/agent.py").read_text(encoding="utf-8")
     assert "UNTRUSTED_DOCUMENT" in agent_code
     print("  [OK] UNTRUSTED_DOCUMENT boundary markers and security guidance verified.")
 
@@ -190,8 +190,8 @@ def test_m5_rag_untrusted_boundaries():
 # ============================================================================
 
 def test_m6_corrupt_json_fails_closed(tmp_path, monkeypatch):
-    from final_customer_support import agent
-    from final_customer_support.tools import business_actions
+    from backend.app.workflows.support_agent import agent
+    from backend.app.workflows.support_agent.tools import business_actions
 
     malformed = "{not valid json"
     path = tmp_path / "orders.json"
@@ -213,7 +213,8 @@ def test_m6_corrupt_json_fails_closed(tmp_path, monkeypatch):
 def test_m7_production_dependencies():
     print("Testing M7 — Production dependencies...")
     backend_reqs = Path("backend/requirements.txt").read_text(encoding="utf-8")
-    agent_reqs = Path("final_customer_support/requirements.txt").read_text(encoding="utf-8")
+    agent_reqs = backend_reqs  # single dependency file after the TASK1 restructure
+    assert not Path("final_customer_support/requirements.txt").exists()
 
     # Backend requirements
     required_backend = [
@@ -238,7 +239,7 @@ def test_m7_production_dependencies():
         "uvicorn==0.53.0",
     ]
     for req in required_agent:
-        assert req in agent_reqs, f"Missing {req} in final_customer_support/requirements.txt"
+        assert req in agent_reqs, f"Missing {req} in backend/requirements.txt"
     assert "mcp==" not in agent_reqs
     print("  [OK] All production and test dependencies pinned and synchronized.")
 
@@ -263,7 +264,7 @@ def test_m8_pytest_configuration():
 
 def test_m9_frontend_auth_error_handling():
     print("Testing M9 — Frontend auth error handling (401 vs 403)...")
-    customer_js = Path("frontend/customer/app.js").read_text(encoding="utf-8")
+    customer_js = Path("frontend/demo-customer/app.js").read_text(encoding="utf-8")
     admin_js = Path("frontend/admin/app.js").read_text(encoding="utf-8")
 
     # Customer frontend: 401 triggers logout, 403 does not

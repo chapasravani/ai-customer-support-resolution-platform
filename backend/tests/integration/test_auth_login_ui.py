@@ -13,8 +13,10 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import auth, db, models
-from backend.main import app
+from backend.app.core import security
+from backend.app.infrastructure import db
+from backend.app.domains import models
+from backend.app.main import app
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -23,7 +25,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 def setup_isolated_test_storage(tmp_path_factory):
     """
     Ensure all tests run against an isolated temporary database file,
-    preserving committed and existing data in backend/data/db_store.json.
+    preserving committed and existing data in data/runtime/db_store.json.
     """
     temp_dir = tmp_path_factory.mktemp("test_auth_data")
     test_data_file = temp_dir / "db_store_test.json"
@@ -35,13 +37,13 @@ def setup_isolated_test_storage(tmp_path_factory):
     # Seed isolated known accounts for testing
     models.create_user(
         email="admin@supportai.com",
-        hashed_password=auth.hash_password("AdminPassword123!"),
+        hashed_password=security.hash_password("AdminPassword123!"),
         name="System Administrator",
         role="admin"
     )
     models.create_user(
         email="cust_matrix@supportai.com",
-        hashed_password=auth.hash_password("Password123!"),
+        hashed_password=security.hash_password("Password123!"),
         name="Matrix Customer",
         role="customer"
     )
@@ -164,7 +166,7 @@ def test_7_customer_cannot_access_admin_routes():
 def test_8_database_failure_returns_503():
     """Verify that backend exceptions during lookup return 503 instead of masking as 401."""
     client = TestClient(app)
-    with patch("backend.models.get_user_by_email", side_effect=RuntimeError("DB dropped")):
+    with patch("backend.app.domains.models.get_user_by_email", side_effect=RuntimeError("DB dropped")):
         res = client.post("/auth/login", json={
             "email": "admin@supportai.com",
             "password": "AdminPassword123!"
@@ -186,7 +188,7 @@ def test_9_account_persistence_across_backend_reloads():
     user_after = models.get_user_by_email("jane.doe@example.com")
     assert user_after is not None
     assert user_after["email"] == "jane.doe@example.com"
-    assert auth.verify_password("JanePassword123!", user_after["hashed_password"])
+    assert security.verify_password("JanePassword123!", user_after["hashed_password"])
 
 
 # ============================================================
@@ -195,7 +197,7 @@ def test_9_account_persistence_across_backend_reloads():
 
 def test_10_js_syntax_cleanliness():
     """Verify both admin and customer JS files parse cleanly with zero syntax errors."""
-    for js_rel in ["frontend/admin/app.js", "frontend/customer/app.js"]:
+    for js_rel in ["frontend/admin/app.js", "frontend/demo-customer/app.js"]:
         p = PROJECT_ROOT / js_rel
         run_res = subprocess.run(["node", "-c", str(p)], capture_output=True, text=True)
         assert run_res.returncode == 0, f"Syntax error in {js_rel}: {run_res.stderr}"
@@ -204,7 +206,7 @@ def test_10_js_syntax_cleanliness():
 def test_11_password_visibility_icons_inside_input_right_aligned():
     """Verify password wrappers, input padding, and right-aligned absolute buttons."""
     admin_css = (PROJECT_ROOT / "frontend" / "admin" / "style.css").read_text(encoding="utf-8")
-    customer_css = (PROJECT_ROOT / "frontend" / "customer" / "style.css").read_text(encoding="utf-8")
+    customer_css = (PROJECT_ROOT / "frontend" / "demo-customer" / "style.css").read_text(encoding="utf-8")
 
     for css in [admin_css, customer_css]:
         assert ".password-input-wrapper" in css
@@ -217,7 +219,7 @@ def test_11_password_visibility_icons_inside_input_right_aligned():
 def test_12_password_toggle_buttons_and_accessibility():
     """Verify password inputs have dedicated toggle buttons with accessible labels."""
     admin_html = (PROJECT_ROOT / "frontend" / "admin" / "index.html").read_text(encoding="utf-8")
-    customer_html = (PROJECT_ROOT / "frontend" / "customer" / "index.html").read_text(encoding="utf-8")
+    customer_html = (PROJECT_ROOT / "frontend" / "demo-customer" / "index.html").read_text(encoding="utf-8")
 
     assert 'id="adminPasswordToggle"' in admin_html
     assert 'aria-controls="password"' in admin_html
@@ -241,14 +243,14 @@ def test_13_admin_card_close_button_top_right():
     assert "right: 16px" in admin_css
     assert "border-radius: 50%" in admin_css
     assert "closeAuthModal" in admin_js
-    assert "../customer/" in admin_js
+    assert "../demo-customer/" in admin_js
 
 
 def test_14_customer_sidebar_toggle_and_responsive_drawer():
     """Verify customer sidebar has toggle button, backdrop, and CSS state classes."""
-    cust_html = (PROJECT_ROOT / "frontend" / "customer" / "index.html").read_text(encoding="utf-8")
-    cust_css = (PROJECT_ROOT / "frontend" / "customer" / "style.css").read_text(encoding="utf-8")
-    cust_js = (PROJECT_ROOT / "frontend" / "customer" / "app.js").read_text(encoding="utf-8")
+    cust_html = (PROJECT_ROOT / "frontend" / "demo-customer" / "index.html").read_text(encoding="utf-8")
+    cust_css = (PROJECT_ROOT / "frontend" / "demo-customer" / "style.css").read_text(encoding="utf-8")
+    cust_js = (PROJECT_ROOT / "frontend" / "demo-customer" / "app.js").read_text(encoding="utf-8")
 
     assert 'id="sidebarToggleBtn"' in cust_html
     assert 'id="sidebarBackdrop"' in cust_html

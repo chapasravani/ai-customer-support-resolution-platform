@@ -11,9 +11,11 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 import pytest
 
-from backend import auth, db, models
-from backend.main import app
-from final_customer_support.tools import business_actions
+from backend.app.core import security
+from backend.app.infrastructure import db
+from backend.app.domains import models
+from backend.app.main import app
+from backend.app.workflows.support_agent.tools import business_actions
 
 client = TestClient(app)
 
@@ -54,10 +56,10 @@ def test_n12_admin_actions_endpoints(tmp_path, monkeypatch):
 
     # Create admin and customer tokens
     admin_user = models.create_user("phase2_admin@example.com", "Password123!", "Admin User", role="admin")
-    admin_token = auth.create_access_token(str(admin_user["_id"]), role="admin")
+    admin_token = security.create_access_token(str(admin_user["_id"]), role="admin")
 
     cust_user = models.create_user("phase2_cust@example.com", "Password123!", "Customer User", role="customer")
-    cust_token = auth.create_access_token(str(cust_user["_id"]), role="customer")
+    cust_token = security.create_access_token(str(cust_user["_id"]), role="customer")
 
     # 1. Customer cannot access /admin/actions (403)
     resp = client.get("/admin/actions", headers={"Authorization": f"Bearer {cust_token}"})
@@ -124,7 +126,7 @@ def test_n12_admin_actions_endpoints(tmp_path, monkeypatch):
 def test_h1_and_n3_single_open_ticket_and_trusted_id():
     """H1 & N3: Backend generates CASE- id and prevents duplicate open tickets per conversation."""
     cust_user = models.create_user("phase2_cust@example.com", "Password123!", "Customer User", role="customer")
-    cust_token = auth.create_access_token(str(cust_user["_id"]), role="customer")
+    cust_token = security.create_access_token(str(cust_user["_id"]), role="customer")
 
     convo = models.create_conversation(str(cust_user["_id"]))
     convo_id = str(convo["_id"])
@@ -142,7 +144,7 @@ def test_h1_and_n3_single_open_ticket_and_trusted_id():
         "issue_type": "damaged",
     }
 
-    with patch("backend.routes.chat.run_support_workflow", return_value=mock_workflow_turn1):
+    with patch("backend.app.api.routes.chat.run_support_workflow", return_value=mock_workflow_turn1):
         resp1 = client.post(
             "/chat/message",
             headers={"Authorization": f"Bearer {cust_token}"},
@@ -173,7 +175,7 @@ def test_h1_and_n3_single_open_ticket_and_trusted_id():
         "issue_type": "damaged",
     }
 
-    with patch("backend.routes.chat.run_support_workflow", return_value=mock_workflow_turn2):
+    with patch("backend.app.api.routes.chat.run_support_workflow", return_value=mock_workflow_turn2):
         resp2 = client.post(
             "/chat/message",
             headers={"Authorization": f"Bearer {cust_token}"},
@@ -191,7 +193,7 @@ def test_h1_and_n3_single_open_ticket_and_trusted_id():
 def test_c6_request_id_deduplication():
     """C6: Retrying with identical request_id does not re-run workflow or generate duplicate side effects."""
     cust_user = models.create_user("phase2_cust@example.com", "Password123!", "Customer User", role="customer")
-    cust_token = auth.create_access_token(str(cust_user["_id"]), role="customer")
+    cust_token = security.create_access_token(str(cust_user["_id"]), role="customer")
 
     convo = models.create_conversation(str(cust_user["_id"]))
     convo_id = str(convo["_id"])
@@ -209,7 +211,7 @@ def test_c6_request_id_deduplication():
             "issue_type": "",
         }
 
-    with patch("backend.routes.chat.run_support_workflow", side_effect=counting_workflow):
+    with patch("backend.app.api.routes.chat.run_support_workflow", side_effect=counting_workflow):
         # First send with request_id="req-abc-123"
         resp1 = client.post(
             "/chat/message",

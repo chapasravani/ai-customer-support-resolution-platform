@@ -32,7 +32,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
-from final_customer_support.tools import business_actions
+from backend.app.workflows.support_agent.tools import business_actions
 
 
 def _context(customer_id):

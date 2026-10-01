@@ -1,8 +1,8 @@
 import os
 from pathlib import Path
 
-from backend import db
-from final_customer_support.tools import business_actions
+from backend.app.infrastructure import db
+from backend.app.workflows.support_agent.tools import business_actions
 
 
 def test_r21_file_store_and_action_paths_are_test_local():
@@ -13,5 +13,5 @@ def test_r21_file_store_and_action_paths_are_test_local():
     assert db.DATA_FILE.resolve() == configured_db
     assert configured_db.is_relative_to(repo) is False
     assert business_actions.FIXTURE_DATA.resolve() == configured_fixtures
-    assert business_actions.FIXTURE_DATA.resolve().is_relative_to(repo / "final_customer_support" / "data") is False
-    assert business_actions.DATA.resolve().is_relative_to(repo / "final_customer_support" / "data") is False
+    assert business_actions.FIXTURE_DATA.resolve().is_relative_to(repo / "backend.app.workflows.support_agent" / "data") is False
+    assert business_actions.DATA.resolve().is_relative_to(repo / "backend.app.workflows.support_agent" / "data") is False

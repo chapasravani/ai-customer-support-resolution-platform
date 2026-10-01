@@ -21,10 +21,11 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from backend import db, models
-from backend.api_schemas import FeedbackRequest, TicketStatus, TicketStatusUpdate
-from backend.main import app
-from backend.routes import chat, tickets
+from backend.app.infrastructure import db
+from backend.app.domains import models
+from backend.app.api.schemas import FeedbackRequest, TicketStatus, TicketStatusUpdate
+from backend.app.main import app
+from backend.app.api.routes import chat, tickets
 
 
 # ============================================================================
@@ -34,17 +35,17 @@ from backend.routes import chat, tickets
 def test_l1_documentation_consistency():
     print("Testing L1 — Documentation consistency...")
     root_readme = Path("README.md").read_text(encoding="utf-8")
-    adk_readme = Path("final_customer_support/README.md").read_text(encoding="utf-8")
-    env_example = Path("backend/.env.example").read_text(encoding="utf-8")
+    for doc in ("docs/architecture.md", "docs/api.md", "docs/operations.md"):
+        assert Path(doc).exists(), doc
+    assert not Path("backend/.env.example").exists() and not Path("final_customer_support/.env.example").exists()
 
-    env_files = [Path(".env.example"), Path("backend/.env.example"), Path("final_customer_support/.env.example")]
+    env_files = [Path(".env.example")]
     names = []
     for path in env_files:
         content = path.read_text(encoding="utf-8")
         names.append(set(re.findall(r"^([A-Z][A-Z0-9_]*)=", content, flags=re.MULTILINE)))
         assert "ADK_MODEL" not in content
         assert "JWT_SECRET=" in content and "JWT_SECRET=your_" not in content
-    assert names[0] == names[1] == names[2]
 
     for required in (
         "```mermaid", "## Setup", "## Admin routes", "JWT_SECRET", "32 characters",
@@ -52,7 +53,7 @@ def test_l1_documentation_consistency():
         "MAX_OUTPUT_TOKENS", "LOGIN_RATE_LIMIT_ATTEMPTS", "LOGIN_RATE_LIMIT_WINDOW_SECONDS",
         "LOGIN_RATE_LIMIT_IP_ATTEMPTS", "LOGIN_RATE_LIMIT_IP_WINDOW_SECONDS",
         "SUPPORTAI_DATA_FILE", "SUPPORTAI_FIXTURE_DIR", "SUPPORTAI_RUNTIME_DIR",
-        "backend/data/runtime/db_store.json",
+        "data/runtime/db_store.json",
     ):
         assert required.lower() in root_readme.lower()
     assert "final_customer_support_project/" not in root_readme
@@ -72,7 +73,7 @@ def test_l1_documentation_consistency():
     }
     assert documented_routes
     assert documented_routes <= registered_routes, documented_routes - registered_routes
-    assert "CORS_ORIGINS" in env_example
+    assert "CORS_ORIGINS" in Path(".env.example").read_text(encoding="utf-8")
     print("  [OK] Documentation across READMEs and .env.example is consistent and safe.")
 
 
@@ -82,7 +83,7 @@ def test_l1_documentation_consistency():
 
 def test_l2_dead_code_and_case_id_uniqueness():
     print("Testing L2 — Dead agent and integration cleanup...")
-    agent_code = Path("final_customer_support/agent.py").read_text(encoding="utf-8")
+    agent_code = Path("backend/app/workflows/support_agent/agent.py").read_text(encoding="utf-8")
     assert "mcp_specialist" not in agent_code
     assert "carrier_investigation_agent" not in agent_code
     assert "openapi_agent" not in agent_code
@@ -90,7 +91,7 @@ def test_l2_dead_code_and_case_id_uniqueness():
     assert not Path("final_customer_support/openapi.yaml").exists()
 
     # Verify unused imports removed from db.py
-    db_code = Path("backend/db.py").read_text(encoding="utf-8")
+    db_code = Path("backend/app/infrastructure/db.py").read_text(encoding="utf-8")
     assert "from typing import Optional" not in db_code
     assert "from pymongo.database import Database" not in db_code
     print("  [OK] Unused agents removed and policy advisor remains wired.")
@@ -200,14 +201,14 @@ def test_l4_customer_feedback():
 
 def test_l5_api_configuration():
     print("Testing L5 — Configurable frontend API base URLs...")
-    customer_js = Path("frontend/customer/app.js").read_text(encoding="utf-8")
+    customer_js = Path("frontend/demo-customer/app.js").read_text(encoding="utf-8")
     admin_js = Path("frontend/admin/app.js").read_text(encoding="utf-8")
 
     # Check customer app.js
     assert "window.API_BASE_URL" not in customer_js
     assert "localStorage.getItem(\"api_base_url\")" not in customer_js
     assert "\"http://127.0.0.1:8000\"" not in customer_js
-    assert '../shared/config.js' in Path("frontend/customer/index.html").read_text(encoding="utf-8")
+    assert '../shared/config.js' in Path("frontend/demo-customer/index.html").read_text(encoding="utf-8")
 
     # Check admin app.js
     assert "window.API_BASE_URL" not in admin_js
@@ -273,13 +274,13 @@ def test_l6_pagination_and_conversation_loading():
 
 def test_n8_single_process_store_limit_documented():
     readme = Path("README.md").read_text(encoding="utf-8").lower()
-    assert "backend/data/runtime/db_store.json" in readme
+    assert "data/runtime/db_store.json" in readme
     assert "one python process" in readme
     assert "stop the api before using" in readme
 
 
 def test_f6_copy_button_builder_is_shared_by_both_message_types():
-    script = Path("frontend/customer/app.js").read_text(encoding="utf-8")
+    script = Path("frontend/demo-customer/app.js").read_text(encoding="utf-8")
     assert script.count("function createCopyButton(") == 1
     assert script.count("const copyButton = createCopyButton(text);") == 2
 

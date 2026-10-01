@@ -6,10 +6,12 @@ from fastapi.testclient import TestClient
 from google.adk.models import BaseLlm, LlmResponse
 from google.genai import types
 
-from backend import auth, db, models
-from backend.main import app
-from backend import adk_bridge
-from final_customer_support import agent as fcs_agent
+from backend.app.core import security
+from backend.app.infrastructure import db
+from backend.app.domains import models
+from backend.app.main import app
+from backend.app.workflows import adk_bridge
+from backend.app.workflows.support_agent import agent as fcs_agent
 
 client = TestClient(app)
 
@@ -94,13 +96,13 @@ def test_n6_real_path_identity_enforcement(monkeypatch):
 
     user = models.create_user(
         email=test_email,
-        hashed_password=auth.hash_password("SecurePassword123!"),
+        hashed_password=security.hash_password("SecurePassword123!"),
         name="Test C102",
         role="customer",
         customer_id="C102"
     )
     user_id = str(user["_id"])
-    token = auth.create_access_token(user_id=user_id, role="customer")
+    token = security.create_access_token(user_id=user_id, role="customer")
     convo = models.create_conversation(user_id)
     convo_id = str(convo["_id"])
 
@@ -171,13 +173,13 @@ def test_n6_real_path_identity_enforcement(monkeypatch):
     # Positive control: the actual owner receives the same order record.
     owner = models.create_user(
         email="test_c101@example.com",
-        hashed_password=auth.hash_password("SecurePassword123!"),
+        hashed_password=security.hash_password("SecurePassword123!"),
         name="Test C101",
         role="customer",
         customer_id="C101",
     )
     owner_id = str(owner["_id"])
-    owner_token = auth.create_access_token(user_id=owner_id, role="customer")
+    owner_token = security.create_access_token(user_id=owner_id, role="customer")
     owner_resp = client.post(
         "/chat/message",
         json={"message": "Please check my order ORD123"},

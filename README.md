@@ -27,12 +27,25 @@ The backend owns ticket IDs, ticket persistence, request idempotency, authentica
 ## Repository layout
 
 ```text
-backend/                  FastAPI app, routes, data access, RAG, tests
-final_customer_support/   ADK agents, action tools, sample data
-frontend/customer/        Customer chat page
-frontend/admin/           Admin console
-frontend/shared/          Shared browser configuration
+backend/app/
+  main.py                 FastAPI app assembly and startup checks
+  api/routes/                 HTTP routes (auth, chat, tickets, documents, admin) and schemas
+  core/                   config (.env + paths), JWT/password auth, route dependencies
+  domains/                users, conversations, tickets, chat requests (data access)
+  workflows/              adk_bridge (route -> ADK runner) and support_agent/ (agents, tools)
+  rag/                    document ingestion, retrieval, context formatting
+  infrastructure/         MongoDB client and local file-backed fallback store
+backend/tests/            unit/ and integration/ tests
+data/fixtures/            tracked, read-only sample customers, orders, policies
+data/runtime/             git-ignored runtime state (actions, local DB, Chroma index)
+frontend/demo-customer/   first-party demo chat page (clients use their own UI)
+frontend/admin/           admin console
+frontend/shared/          shared browser configuration
+scripts/manage_admin.py   admin account CLI
+docs/                     architecture, API, and operations guides
 ```
+
+More detail: [docs/architecture.md](docs/architecture.md), [docs/api.md](docs/api.md), [docs/operations.md](docs/operations.md).
 
 ## Setup
 
@@ -41,17 +54,17 @@ Use Python 3.12. From the repository root:
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r backend/requirements.txt -r final_customer_support/requirements.txt
-Copy-Item backend/.env.example backend/.env
+python -m pip install -r backend/requirements.txt
+Copy-Item .env.example .env
 ```
 
-Set the values needed for your environment in `backend/.env`. `JWT_SECRET` must be at least 32 characters and must not be a placeholder. Generate a value with:
+Set the values needed for your environment in the root `.env`. (Existing `backend/.env` or `final_customer_support/.env` files are still read for compatibility; move their values into the root `.env`.) `JWT_SECRET` must be at least 32 characters and must not be a placeholder. Generate a value with:
 
 ```powershell
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-The same variable names are listed in the root, backend, and ADK `.env.example` files.
+All variables are listed in the root `.env.example`.
 
 | Variable | Purpose |
 | --- | --- |
@@ -72,13 +85,14 @@ The same variable names are listed in the root, backend, and ADK `.env.example` 
 | `SUPPORTAI_DATA_FILE` | Override for the local Mongo-compatible file store |
 | `SUPPORTAI_FIXTURE_DIR` | Override for read-only customer/order/policy fixtures |
 | `SUPPORTAI_RUNTIME_DIR` | Override for runtime actions and local data |
+| `CHROMA_DIR` | Override for the Chroma vector index (default `data/runtime/chroma_db`) |
 
 ## Create an admin
 
 Public registration only creates customer accounts. Create an administrator from the repository root:
 
 ```powershell
-python -m backend.manage_admin create --email admin@example.com --password "UseAUniquePassword123!" --name "Support Admin"
+python -m scripts.manage_admin create --email admin@example.com --password "UseAUniquePassword123!" --name "Support Admin"
 ```
 
 Passwords must be at least 10 characters. Stop the API before running `manage_admin` when the local file-backed store is active.
@@ -88,7 +102,7 @@ Passwords must be at least 10 characters. Stop the API before running `manage_ad
 Start the API from the repository root:
 
 ```powershell
-python -m uvicorn backend.main:app --reload --port 8000
+python -m uvicorn backend.app.main:app --reload --port 8000
 ```
 
 OpenAPI docs are at `http://127.0.0.1:8000/docs`; the health check is `/health`.
@@ -96,7 +110,7 @@ OpenAPI docs are at `http://127.0.0.1:8000/docs`; the health check is `/health`.
 In separate terminals, serve each static frontend:
 
 ```powershell
-python -m http.server 3000 --directory frontend/customer
+python -m http.server 3000 --directory frontend/demo-customer
 python -m http.server 3001 --directory frontend/admin
 ```
 
@@ -129,8 +143,7 @@ The suite uses local stubs and isolated temporary stores; live provider credenti
 
 ## Data safety and storage limits
 
-`final_customer_support/data/fixtures/` contains read-only customer, order, and policy examples. Runtime actions and the local database belong under `data/runtime/`; the runtime directory is ignored by Git. Chroma stores policy vectors separately.
+`data/fixtures/` contains read-only customer, order, and policy examples. Runtime actions and the local database belong under `data/runtime/`; the runtime directory is ignored by Git. The Chroma policy index lives in `data/runtime/chroma_db/`.
 
-When MongoDB is unreachable, the app can use the JSON-backed file store at `backend/data/runtime/db_store.json`. Its lock only coordinates threads in one Python process. It is for local demos and single-process use, not a multi-worker deployment. Stop the API before using `manage_admin` with that fallback store.
+When MongoDB is unreachable, the app can use the JSON-backed file store at `data/runtime/db_store.json`. Its lock only coordinates threads in one Python process. It is for local demos and single-process use, not a multi-worker deployment. Stop the API before using `manage_admin` with that fallback store.
 
-The former implementation progress notes described the same agent flow and operational choices; this README is now the maintained setup and architecture guide.

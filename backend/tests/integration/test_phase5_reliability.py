@@ -29,11 +29,12 @@ import asyncio
 import os
 from unittest.mock import patch, MagicMock
 
-from backend import db, models
-from backend.rag import retriever, context
-from backend import adk_bridge
-from backend.routes import chat
-from backend.api_schemas import ChatMessageRequest
+from backend.app.infrastructure import db
+from backend.app.domains import models
+from backend.app.rag import retriever, context
+from backend.app.workflows import adk_bridge
+from backend.app.api.routes import chat
+from backend.app.api.schemas import ChatMessageRequest
 
 
 def test_h1_duplicate_support_tickets():
@@ -47,7 +48,7 @@ def test_h1_duplicate_support_tickets():
     try:
         # Simulate escalation 1
         escalation1 = {"should_escalate": True, "reason": "Order delayed"}
-        with patch("backend.routes.chat.run_support_workflow", return_value={
+        with patch("backend.app.api.routes.chat.run_support_workflow", return_value={
             "response": "Your case has been forwarded to human support.",
             "success": True,
             "escalation": escalation1,
@@ -67,7 +68,7 @@ def test_h1_duplicate_support_tickets():
 
         # Simulate escalation 2 in the SAME conversation
         escalation2 = {"should_escalate": True, "reason": "Still delayed after 3 days"}
-        with patch("backend.routes.chat.run_support_workflow", return_value={
+        with patch("backend.app.api.routes.chat.run_support_workflow", return_value={
             "response": "I see you already have a case, checking on it.",
             "success": True,
             "escalation": escalation2,
@@ -159,7 +160,7 @@ def test_h4_false_ticket_created_response():
 
     try:
         escalation = {"should_escalate": True, "reason": "System error requiring human"}
-        with patch("backend.routes.chat.run_support_workflow", return_value={
+        with patch("backend.app.api.routes.chat.run_support_workflow", return_value={
             "response": "I have created ticket CASE-12345678 for you.",
             "success": True,
             "escalation": escalation,
@@ -169,7 +170,7 @@ def test_h4_false_ticket_created_response():
             "issue_type": "general_support",
         }):
             # Simulate create_ticket throwing a database failure
-            with patch("backend.models.find_or_create_open_ticket", side_effect=RuntimeError("Database write error")):
+            with patch("backend.app.domains.models.find_or_create_open_ticket", side_effect=RuntimeError("Database write error")):
                 res = asyncio.run(chat.send_message(
                     ChatMessageRequest(conversation_id=convo_id, message="Help me please"),
                     user=user,
@@ -202,7 +203,7 @@ def test_h5_workflow_failure_not_saved_as_assistant_turn():
     convo_id = str(convo["_id"])
 
     try:
-        with patch("backend.routes.chat.run_support_workflow", return_value={
+        with patch("backend.app.api.routes.chat.run_support_workflow", return_value={
             "response": "I'm temporarily receiving a high volume of requests.",
             "success": False,
             "error_type": "rate_limit",

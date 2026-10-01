@@ -31,8 +31,10 @@ import os
 
 from fastapi.testclient import TestClient
 
-from backend import auth, db, models
-from backend.main import app
+from backend.app.core import security
+from backend.app.infrastructure import db
+from backend.app.domains import models
+from backend.app.main import app
 
 
 # ============================================================
@@ -300,7 +302,7 @@ def main() -> None:
     assert r_admin_attempt.status_code == 400, "Public registration must reject role=admin"
 
     # Provision admin legitimately via backend models / admin provisioning
-    admin_hash = auth.hash_password(TEST_PASSWORD)
+    admin_hash = security.hash_password(TEST_PASSWORD)
     models.create_user(
         email=TEST_ADMIN_EMAIL,
         hashed_password=admin_hash,

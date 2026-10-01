@@ -9,10 +9,12 @@ import os
 from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
-from backend import auth, db, models
-from backend.main import app
-from final_customer_support import agent as fcs_agent
-from final_customer_support.tools import business_actions
+from backend.app.core import security
+from backend.app.infrastructure import db
+from backend.app.domains import models
+from backend.app.main import app
+from backend.app.workflows.support_agent import agent as fcs_agent
+from backend.app.workflows.support_agent.tools import business_actions
 
 client = TestClient(app)
 
@@ -114,7 +116,7 @@ def test_c2_customer_order_ownership():
 def test_c7_jwt_secret_security():
     """C7: Verify JWT secret validation and failure handling."""
     # 1. Normal configured secret works and must be >= 32 chars
-    secret = auth.get_jwt_secret()
+    secret = security.get_jwt_secret()
     assert len(secret) >= 32
 
     # 2. Missing secret raises RuntimeError
@@ -122,7 +124,7 @@ def test_c7_jwt_secret_security():
     try:
         os.environ["JWT_SECRET"] = ""
         try:
-            auth.get_jwt_secret()
+            security.get_jwt_secret()
             assert False, "Should have raised RuntimeError for missing JWT_SECRET"
         except RuntimeError as exc:
             assert "JWT_SECRET is not configured" in str(exc)
@@ -130,7 +132,7 @@ def test_c7_jwt_secret_security():
         # 3. Insecure default placeholder raises RuntimeError in any environment
         os.environ["JWT_SECRET"] = "dev-only-secret-change-me"
         try:
-            auth.get_jwt_secret()
+            security.get_jwt_secret()
             assert False, "Should have raised RuntimeError for placeholder secret"
         except RuntimeError as exc:
             assert "Insecure or placeholder JWT_SECRET" in str(exc)
@@ -138,7 +140,7 @@ def test_c7_jwt_secret_security():
         # 4. Short secret (< 32 chars) raises RuntimeError
         os.environ["JWT_SECRET"] = "too-short-secret"
         try:
-            auth.get_jwt_secret()
+            security.get_jwt_secret()
             assert False, "Should have raised RuntimeError for short secret"
         except RuntimeError as exc:
             assert "Insecure or placeholder JWT_SECRET" in str(exc)

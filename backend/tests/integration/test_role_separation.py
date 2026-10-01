@@ -20,9 +20,11 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import auth, db, models
-from backend.main import app
-from final_customer_support.tools import business_actions
+from backend.app.core import security
+from backend.app.infrastructure import db
+from backend.app.domains import models
+from backend.app.main import app
+from backend.app.workflows.support_agent.tools import business_actions
 
 client = TestClient(app)
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -36,15 +38,15 @@ def test_users():
     cust_a_email = f"test_cust_a_{uid}@example.com"
     cust_b_email = f"test_cust_b_{uid}@example.com"
 
-    pwd_hash = auth.hash_password("Password123!")
+    pwd_hash = security.hash_password("Password123!")
 
     admin_user = models.create_user(admin_email, pwd_hash, "Test Admin", "admin")
     cust_a_user = models.create_user(cust_a_email, pwd_hash, "Customer A", "customer")
     cust_b_user = models.create_user(cust_b_email, pwd_hash, "Customer B", "customer")
 
-    admin_token = auth.create_access_token(str(admin_user["_id"]), "admin")
-    cust_a_token = auth.create_access_token(str(cust_a_user["_id"]), "customer")
-    cust_b_token = auth.create_access_token(str(cust_b_user["_id"]), "customer")
+    admin_token = security.create_access_token(str(admin_user["_id"]), "admin")
+    cust_a_token = security.create_access_token(str(cust_a_user["_id"]), "customer")
+    cust_b_token = security.create_access_token(str(cust_b_user["_id"]), "customer")
 
     yield {
         "admin": {"user": admin_user, "token": admin_token, "headers": {"Authorization": f"Bearer {admin_token}"}},
@@ -240,7 +242,7 @@ def test_05_public_registration_cannot_create_admin():
 # ---------------------------------------------------------------------------
 
 def test_06_frontend_admin_redirect_logic():
-    cust_js = (PROJECT_ROOT / "frontend" / "customer" / "app.js").read_text(encoding="utf-8")
+    cust_js = (PROJECT_ROOT / "frontend" / "demo-customer" / "app.js").read_text(encoding="utf-8")
 
     # Verify admin redirection in initializeAuthenticatedApp
     assert 'user.role === "admin"' in cust_js
@@ -259,7 +261,7 @@ def test_06_frontend_admin_redirect_logic():
 # ---------------------------------------------------------------------------
 
 def test_07_frontend_customer_access_logic():
-    cust_js = (PROJECT_ROOT / "frontend" / "customer" / "app.js").read_text(encoding="utf-8")
+    cust_js = (PROJECT_ROOT / "frontend" / "demo-customer" / "app.js").read_text(encoding="utf-8")
 
     # Verify customer role activates customer state and loads data
     assert 'user.role === "customer"' in cust_js
@@ -281,7 +283,7 @@ def test_08_frontend_admin_protection_logic():
 
     # Admin JS rejects non-admin users and redirects customers back to customer dashboard
     assert 'state.user.role !== "admin"' in admin_js
-    assert 'window.location.replace("../customer/")' in admin_js
+    assert 'window.location.replace("../demo-customer/")' in admin_js
     assert 'data.role && data.role !== "admin"' in admin_js
 
 
@@ -333,7 +335,7 @@ def test_10_authorized_customer_chat_operations_work(test_users):
     assert isinstance(resp_convs.json(), list)
 
     # Customer can send a message with mocked ADK workflow (no external LLM needed)
-    with patch("backend.routes.chat.run_support_workflow", new_callable=AsyncMock) as mock_workflow:
+    with patch("backend.app.api.routes.chat.run_support_workflow", new_callable=AsyncMock) as mock_workflow:
         mock_workflow.return_value = {
             "response": "Hello! I am your AI assistant. How can I help you today?",
             "success": True,

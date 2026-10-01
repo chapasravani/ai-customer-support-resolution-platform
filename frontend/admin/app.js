@@ -1055,7 +1055,7 @@ async function initialize() {
             const isCustomer = state.user && state.user.role === "customer";
             logout();
             if (isCustomer) {
-                window.location.replace("../customer/");
+                window.location.replace("../demo-customer/");
                 return;
             }
             setLoginError("Access denied: This account does not have administrator access.");
@@ -1095,7 +1095,7 @@ if (closeAuthModal) {
         function () {
 
             window.location.href =
-                "../customer/";
+                "../demo-customer/";
         }
     );
 }

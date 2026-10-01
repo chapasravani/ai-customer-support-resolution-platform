@@ -16,7 +16,8 @@ What it does:
       without leaving test data behind
 """
 
-from backend import db, models
+from backend.app.infrastructure import db
+from backend.app.domains import models
 
 
 def main() -> None:

@@ -2,9 +2,9 @@ import asyncio
 import pytest
 from fastapi import HTTPException
 
-from backend.rag import context, retriever
-from backend import main
-from backend.routes import documents
+from backend.app.rag import context, retriever
+from backend.app import main
+from backend.app.api.routes import documents
 
 
 def test_rag_outage_is_distinct_from_empty_collection(monkeypatch):

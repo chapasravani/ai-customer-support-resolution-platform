@@ -9,10 +9,12 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from backend import auth, db, models
-from backend.main import app
-from backend.api_schemas import ChatMessageRequest
-from backend.routes import chat
+from backend.app.core import security
+from backend.app.infrastructure import db
+from backend.app.domains import models
+from backend.app.main import app
+from backend.app.api.schemas import ChatMessageRequest
+from backend.app.api.routes import chat
 from pymongo.errors import DuplicateKeyError
 
 
@@ -21,7 +23,7 @@ client = TestClient(app)
 
 def _customer(email):
     user = models.create_user(email, "hash", "Round two", "customer")
-    return user, {"Authorization": f"Bearer {auth.create_access_token(str(user['_id']), role='customer')}"}
+    return user, {"Authorization": f"Bearer {security.create_access_token(str(user['_id']), role='customer')}"}
 
 
 def test_r6_concurrent_request_id_is_claimed_once():
@@ -39,7 +41,7 @@ def test_r6_concurrent_request_id_is_claimed_once():
         return {"response": "done", "success": True, "escalation": {}}
 
     try:
-        with patch("backend.routes.chat.run_support_workflow", side_effect=blocked_workflow):
+        with patch("backend.app.api.routes.chat.run_support_workflow", side_effect=blocked_workflow):
             with ThreadPoolExecutor(max_workers=1) as pool:
                 first = pool.submit(client.post, "/chat/message", headers=headers, json={
                     "message": "help", "conversation_id": str(convo["_id"]), "request_id": "same-id",
@@ -72,7 +74,7 @@ def test_r6_failed_retry_reuses_user_message_and_is_per_user():
         return {"response": f"done {calls}", "success": True, "escalation": {}}
 
     try:
-        with patch("backend.routes.chat.run_support_workflow", side_effect=fail_then_succeed):
+        with patch("backend.app.api.routes.chat.run_support_workflow", side_effect=fail_then_succeed):
             first = client.post("/chat/message", headers=headers_a, json={
                 "message": "help", "conversation_id": str(convo["_id"]), "request_id": "retry-id",
             })
@@ -102,7 +104,7 @@ def test_r8_escalation_reply_uses_active_ticket_id_and_reopens_resolved():
     old = models.create_ticket("CASE-OLD", str(user["_id"]), "old", conversation_id=convo_id, status="resolved")
     result = {"response": "Human escalation requested.", "success": True, "escalation": {"should_escalate": True}}
     try:
-        with patch("backend.routes.chat.run_support_workflow", return_value=result):
+        with patch("backend.app.api.routes.chat.run_support_workflow", return_value=result):
             response = client.post("/chat/message", headers=headers, json={"message": "escalate", "conversation_id": convo_id})
         docs = list(db.get_db().tickets.find({"conversation_id": models._oid(convo_id)}))
         new = [ticket for ticket in docs if ticket["status"] == "open"]
@@ -170,8 +172,8 @@ def test_r9_ticket_update_failure_is_reported_and_request_stays_retryable():
     convo_id = str(convo["_id"])
     result = {"response": "We are escalating this.", "success": True, "escalation": {"should_escalate": True}}
     try:
-        with patch("backend.routes.chat.run_support_workflow", return_value=result), \
-             patch("backend.models.update_ticket_issue", side_effect=RuntimeError("update failed")):
+        with patch("backend.app.api.routes.chat.run_support_workflow", return_value=result), \
+             patch("backend.app.domains.models.update_ticket_issue", side_effect=RuntimeError("update failed")):
             response = client.post("/chat/message", headers=headers, json={
                 "message": "please escalate", "conversation_id": convo_id, "request_id": "r9-retryable",
             })
@@ -192,8 +194,8 @@ def test_r9_ticket_update_failure_is_reported_and_request_stays_retryable():
 def test_r12_no_tool_accepts_customer_id_override():
     import inspect
     from google.adk.tools import FunctionTool
-    from final_customer_support import agent
-    from final_customer_support.tools import business_actions
+    from backend.app.workflows.support_agent import agent
+    from backend.app.workflows.support_agent.tools import business_actions
 
     assert "customer_id" not in inspect.signature(agent.get_customer_details).parameters
     assert "customer_id" not in inspect.signature(agent.initialize_support_state).parameters
@@ -211,7 +213,7 @@ def test_r12_no_tool_accepts_customer_id_override():
 
 def test_r17_empty_final_response_is_an_error():
     from unittest.mock import AsyncMock, MagicMock
-    from backend import adk_bridge
+    from backend.app.workflows import adk_bridge
 
     async def events(**kwargs):
         if False:
@@ -233,7 +235,7 @@ def test_r4_action_then_service_error_is_never_retried():
     from unittest.mock import AsyncMock, MagicMock
     from google.genai import types
     from google.adk.events.event import Event
-    from backend import adk_bridge
+    from backend.app.workflows import adk_bridge
 
     action_calls = 0
 
@@ -263,7 +265,7 @@ def test_r4_action_then_service_error_is_never_retried():
 
 
 def test_r18_session_hydration_error_fails_workflow():
-    from backend import adk_bridge
+    from backend.app.workflows import adk_bridge
 
     with patch.object(adk_bridge, "_get_or_create_session", side_effect=RuntimeError("history store down")):
         result = asyncio.run(adk_bridge.run_support_workflow("u", "s-r18", "hello"))
@@ -273,7 +275,7 @@ def test_r18_session_hydration_error_fails_workflow():
 
 def test_r19_hydration_skips_failed_turns():
     from google.adk.sessions import InMemorySessionService
-    from backend import adk_bridge
+    from backend.app.workflows import adk_bridge
 
     service = InMemorySessionService()
     convo = models.create_conversation("r19-user")
@@ -293,7 +295,7 @@ def test_r19_hydration_skips_failed_turns():
 
 
 def test_r20_corrupt_agent_data_raises_without_changing_file(tmp_path, monkeypatch):
-    from final_customer_support import agent
+    from backend.app.workflows.support_agent import agent
 
     path = tmp_path / "orders.json"
     original = "{invalid json"
@@ -309,7 +311,7 @@ def test_r20_corrupt_agent_data_raises_without_changing_file(tmp_path, monkeypat
 
 def test_r22_same_identity_does_not_append_empty_session_delta():
     from google.adk.sessions import InMemorySessionService
-    from backend import adk_bridge
+    from backend.app.workflows import adk_bridge
 
     service = InMemorySessionService()
     state = {"authenticated_customer_id": "C101"}
@@ -339,8 +341,8 @@ def test_f1_assistant_save_failure_releases_request_for_retry():
         workflow_calls += 1
         return {"response": "resolved", "success": True, "escalation": {}}
 
-    with patch("backend.routes.chat.models.add_message", side_effect=add_message_then_fail_once), \
-         patch("backend.routes.chat.run_support_workflow", side_effect=workflow):
+    with patch("backend.app.api.routes.chat.models.add_message", side_effect=add_message_then_fail_once), \
+         patch("backend.app.api.routes.chat.run_support_workflow", side_effect=workflow):
         with pytest.raises(RuntimeError, match="assistant persistence failed"):
             client.post("/chat/message", headers=headers, json={
                 "message": "help", "conversation_id": str(convo["_id"]), "request_id": request_id,
@@ -373,7 +375,7 @@ def test_f1_stale_in_progress_request_can_be_retried():
         calls += 1
         return {"response": "retried", "success": True, "escalation": {}}
 
-    with patch("backend.routes.chat.run_support_workflow", side_effect=workflow):
+    with patch("backend.app.api.routes.chat.run_support_workflow", side_effect=workflow):
         response = client.post("/chat/message", headers=headers, json={
             "message": "help", "conversation_id": str(convo["_id"]), "request_id": request_id,
         })
@@ -386,7 +388,7 @@ def test_f2_clean_stream_after_action_is_not_retried():
     from unittest.mock import AsyncMock, MagicMock
     from google.adk.events.event import Event
     from google.genai import types
-    from backend import adk_bridge
+    from backend.app.workflows import adk_bridge
 
     calls = 0
 

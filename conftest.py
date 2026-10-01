@@ -12,7 +12,7 @@ _customer_data = _test_data_root / "customer_data"
 _runtime_data = _test_data_root / "runtime_data"
 _customer_data.mkdir()
 _runtime_data.mkdir()
-_sample_data = Path(__file__).parent / "final_customer_support" / "data" / "fixtures"
+_sample_data = Path(__file__).parent / "data" / "fixtures"
 for _filename in ("customers.json", "orders.json", "policies.json", "support_cases.json"):
     if (_sample_data / _filename).exists():
         shutil.copy2(_sample_data / _filename, _customer_data / _filename)
@@ -26,9 +26,9 @@ if not os.environ.get("JWT_SECRET") or len(os.environ["JWT_SECRET"]) < 32 or os.
 
 @pytest.fixture(autouse=True)
 def isolate_sample_data(tmp_path, monkeypatch):
-    """Ensure no test writes to tracked sample data in final_customer_support/data/ (Phase 6)."""
+    """Ensure no test writes to tracked sample data in data/ (Phase 6)."""
     try:
-        from final_customer_support.tools import business_actions
+        from backend.app.workflows.support_agent.tools import business_actions
         repo_data = business_actions.FIXTURE_DATA
         if repo_data.exists():
             for filename in ["orders.json", "policies.json"]:
@@ -43,7 +43,7 @@ def isolate_sample_data(tmp_path, monkeypatch):
 
 
 def _data_worktree_state():
-    paths = ["final_customer_support/data", "backend/data"]
+    paths = ["data"]
     status = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=all", "--", *paths],
         capture_output=True, text=True, check=False,
