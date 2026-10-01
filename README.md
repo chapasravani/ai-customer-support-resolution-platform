@@ -58,7 +58,7 @@ python -m pip install -r backend/requirements.txt
 Copy-Item .env.example .env
 ```
 
-Set the values needed for your environment in the root `.env`. (Existing `backend/.env` or `final_customer_support/.env` files are still read for compatibility; move their values into the root `.env`.) `JWT_SECRET` must be at least 32 characters and must not be a placeholder. Generate a value with:
+Set the values needed for your environment in the root `.env`. `JWT_SECRET` must be at least 32 characters and must not be a placeholder. Generate a value with:
 
 ```powershell
 python -c "import secrets; print(secrets.token_urlsafe(48))"

@@ -16,7 +16,7 @@ from bson import json_util
 from backend.app.core.config import RUNTIME_DIR
 from pymongo import MongoClient
 
-# Load backend/.env if it exists. override=False ensures deployment/CI
+# Env vars come from backend.app.core.config (root .env, override=False) so deployment/CI
 # environment variables take precedence over local .env files (N7).
 # .env is loaded once by backend.app.core.config (override=False, N7).
 

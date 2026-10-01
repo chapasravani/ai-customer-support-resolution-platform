@@ -15,7 +15,7 @@ python -m http.server 3001 --directory frontend/admin
 
 ## Configuration
 
-`backend/app/core/config.py` is the only place that loads `.env` and defines data paths. Real environment variables always win over `.env` (`override=False`). Order: root `.env`, then legacy `backend/.env` and `final_customer_support/.env` (kept for existing setups; move their values to the root `.env` and delete them).
+`backend/app/core/config.py` is the only place that loads `.env` and defines data paths. Real environment variables always win over `.env` (`override=False`).
 
 ## Data locations
 

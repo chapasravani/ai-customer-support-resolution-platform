@@ -28,7 +28,7 @@ def get_jwt_secret() -> str:
     secret = (os.getenv("JWT_SECRET") or "").strip()
     if not secret:
         raise RuntimeError(
-            "JWT_SECRET is not configured. Please define a secure JWT_SECRET (minimum 32 characters) in your environment or backend/.env."
+            "JWT_SECRET is not configured. Please define a secure JWT_SECRET (minimum 32 characters) in your environment or the root .env."
         )
 
     normalized = secret.lower()

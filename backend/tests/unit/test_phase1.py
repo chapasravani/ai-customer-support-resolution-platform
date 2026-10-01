@@ -4,7 +4,7 @@ correctly, BEFORE anything else (FastAPI, ADK) touches it.
 
 How to run:
     1. Make sure MongoDB is running (local `mongod`, or a MongoDB Atlas
-       connection string set as MONGODB_URI in backend/.env).
+       connection string set as MONGODB_URI in the root .env).
     2. From the project root:  python -m backend.test_phase1
 
 What it does:

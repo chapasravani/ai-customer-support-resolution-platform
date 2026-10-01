@@ -17,7 +17,7 @@ from backend.app.core.config import RUNTIME_DIR
 
 
 # -------------------------------------------------------------------
-# Load backend/.env
+# Env vars are loaded by backend.app.core.config (root .env)
 # -------------------------------------------------------------------
 
 # .env is loaded once by backend.app.core.config.
@@ -56,13 +56,13 @@ def get_gemini_client():
     if provider != "gemini":
         raise RuntimeError(
             "RAG embeddings are configured for Gemini. "
-            "Set PROVIDER=gemini in backend/.env"
+            "Set PROVIDER=gemini in the root .env"
         )
 
     google_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("API_KEY")
     if not google_api_key:
         raise RuntimeError(
-            "GOOGLE_API_KEY or API_KEY is not configured in backend/.env"
+            "GOOGLE_API_KEY or API_KEY is not configured in the root .env"
         )
 
     _gemini_client = genai.Client(api_key=google_api_key)
