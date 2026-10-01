@@ -1,25 +1,27 @@
-# Install alongside the existing final_customer_support/requirements.txt
-# - nothing here replaces it. fastapi/uvicorn are already listed there
-# and are not duplicated here.
-#
-#   pip install -r final_customer_support/requirements.txt -r backend/requirements.txt
-#
+# Single dependency list for the API, ADK workflow, RAG and tests.
+#   py -3.12 -m pip install -r backend/requirements.txt
 
-# Phase 1
-pymongo==4.15.5
+# Agent workflow + API
+google-adk==2.9.1
+google-genai==2.23.0
+fastapi==0.141.1
+pydantic==2.13.5
+uvicorn==0.53.0
 python-dotenv==1.1.1
+
+# Storage
+pymongo==4.15.5
 mongomock==4.3.0
 
-# Phase 2 - auth + FastAPI routes
+# Auth + routes
 pyjwt==2.10.1
 bcrypt==4.2.1
 python-multipart==0.0.20
 email-validator==2.2.0
 
-# RAG and Document Ingestion
+# RAG and document ingestion
 chromadb==1.5.9
-pdfplumber==0.11.10
-python-docx==1.2.0
+pypdf==6.19.0
 
 # Testing
 httpx==0.28.1

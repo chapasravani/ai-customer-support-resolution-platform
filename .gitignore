@@ -17,10 +17,12 @@ env/
 .env.*
 !.env.example
 *.bak
+meta_cred.md
 
 # Database and Storage
 chroma_db/
-backend/data/
+data/runtime/
+.venv-task1/
 *.sqlite
 *.db
 
@@ -28,3 +30,9 @@ backend/data/
 *.log
 .DS_Store
 Thumbs.db
+
+# Local planning / progress docs (not part of the product)
+TASK*.md
+draft_templates.md
+meta billing info.md
+.Agent/

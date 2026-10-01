@@ -1,160 +1,149 @@
-# AI Customer Support & Resolution Platform
+# AI Customer Support and Resolution Platform
 
-An enterprise-ready AI Customer Support & Resolution Platform built on **Google ADK 2.9.1**, **Gemini**, **FastAPI**, **MongoDB** (with local persistent fallback store), and modern responsive Web Frontends.
+SupportAI is a customer support app with a FastAPI API, Google ADK agent workflow, customer and admin browser apps, MongoDB storage, and Chroma based policy retrieval. The agents inspect verified customer/order data, apply policy, record requested actions, and hand cases to human support when needed.
 
----
+## Architecture
 
-## Architecture Overview
-
-```
-                      ┌──────────────────────┐
-                      │  Customer / Admin UI │
-                      └──────────┬───────────┘
-                                 │ HTTP / JSON
-                                 ▼
-                      ┌──────────────────────┐
-                      │    FastAPI Backend   │
-                      │  (Auth, Tickets, RAG)│
-                      └──────────┬───────────┘
-                                 │
-           ┌─────────────────────┴─────────────────────┐
-           ▼                                           ▼
-┌─────────────────────────┐               ┌─────────────────────────┐
-│     Google ADK 2.9.1    │               │    Storage Subsystem    │
-│   Multi-Agent Workflow  │               │ • MongoDB Cluster       │
-│ • State Manager         │               │ • Persistent Fallback   │
-│ • Support Manager       │               │   (mongomock + atomic   │
-│ • Research Agents       │               │   disk store)           │
-│ • Investigation Loop    │               │ • ChromaDB Vector Store │
-│ • Resolution & Escalation│              └─────────────────────────┘
-└─────────────────────────┘
+```mermaid
+flowchart LR
+  UI[Customer and admin pages] -->|HTTP JSON| API[FastAPI routes]
+  API --> Bridge[ADK bridge]
+  Bridge --> Agents[ADK agents]
+  Agents --> Tools[Identity checked tools]
+  Tools --> Mongo[(MongoDB or local file store)]
+  Agents --> RAG[Policy retrieval]
+  RAG --> Chroma[(ChromaDB)]
 ```
 
----
+The backend owns ticket IDs, ticket persistence, request idempotency, authentication, and action approval. The agent records escalation intent; it does not create or invent ticket references. Refunds and replacements for delivered orders go to human review.
 
-## Directory Structure
+## Design decisions
 
+- MongoDB stores the customer-visible conversation transcript; the ADK session service separately stores agent state and event history. These stores serve different purposes.
+- MongoDB is the ticket system of record. The agent records escalation intent, and the backend creates the ticket.
+- Chroma is the embedded vector store, which avoids a separate vector service for local use.
+- Gemini embeddings use the existing `google-genai` dependency rather than adding a second embedding library.
+
+## Repository layout
+
+```text
+backend/app/
+  main.py                 FastAPI app assembly and startup checks
+  api/routes/                 HTTP routes (auth, chat, tickets, documents, admin) and schemas
+  core/                   config (.env + paths), JWT/password auth, route dependencies
+  domains/                users, conversations, tickets, chat requests (data access)
+  workflows/              adk_bridge (route -> ADK runner) and support_agent/ (agents, tools)
+  rag/                    document ingestion, retrieval, context formatting
+  infrastructure/         MongoDB client and local file-backed fallback store
+backend/tests/            unit/ and integration/ tests
+data/fixtures/            tracked, read-only sample customers, orders, policies
+data/runtime/             git-ignored runtime state (actions, local DB, Chroma index)
+frontend/demo-customer/   first-party demo chat page (clients use their own UI)
+frontend/admin/           admin console
+frontend/shared/          shared browser configuration
+scripts/manage_admin.py   admin account CLI
+docs/                     architecture, API, and operations guides
 ```
-final_customer_support_project/
-├── backend/
-│   ├── data/                 # Local persistent store (db_store.json)
-│   ├── rag/                  # RAG ingestion, ChromaDB vector store, Gemini retriever
-│   ├── routes/               # API routes (auth, chat, tickets, documents)
-│   ├── adk_bridge.py         # Asynchronous bridge connecting FastAPI to ADK agents
-│   ├── db.py                 # MongoDB connection & thread-safe atomic local fallback
-│   ├── main.py               # FastAPI entry point & lifespan handler
-│   ├── manage_admin.py       # Administrative CLI utility
-│   ├── models.py             # Data-access layer for users, conversations, tickets
-│   └── requirements.txt      # Backend dependencies (including mongomock, chromadb, etc.)
-├── final_customer_support/
-│   ├── data/                 # Reference data (orders.json, policies.json, actions.json)
-│   ├── tools/                # Business action & escalation tools
-│   ├── agent.py              # Root multi-agent ADK workflow
-│   └── requirements.txt      # ADK & Gemini dependencies
-├── frontend/
-│   ├── customer/             # Customer chat UI (HTML/CSS/JS)
-│   └── admin/                # Admin management UI
-└── pytest.ini                # Root test configuration
-```
 
----
+More detail: [docs/architecture.md](docs/architecture.md), [docs/api.md](docs/api.md), [docs/operations.md](docs/operations.md).
 
-## Quickstart
+## Setup
 
-### 1. Prerequisites & Environment
-Ensure Python 3.12 is installed:
+Use Python 3.12. From the repository root:
 
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r final_customer_support/requirements.txt -r backend/requirements.txt
+python -m pip install -r backend/requirements.txt
+Copy-Item .env.example .env
 ```
 
-### 2. Configuration
-Copy example `.env` files and add your Gemini API key:
+Set the values needed for your environment in the root `.env`. `JWT_SECRET` must be at least 32 characters and must not be a placeholder. Generate a value with:
 
 ```powershell
-copy backend\.env.example backend\.env
-copy final_customer_support\.env.example final_customer_support\.env
+python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Key environment variables:
-- `GOOGLE_API_KEY`: Google Gemini API key for ADK agents and RAG embeddings.
-- `PROVIDER`: Model provider (default: `gemini`).
-- `MODEL`: Primary LLM model (default: `gemini-3.5-flash-lite`).
-- `MONGODB_URI`: Connection string (default: `mongodb://localhost:27017` or Atlas URI; falls back automatically to local persistent store if unreachable).
-- `MONGODB_DB_NAME`: Database name (default: `customer_support`).
-- `JWT_SECRET`: Secret key for signing customer/admin JWT access tokens (minimum 32 characters).
-- `JWT_EXPIRES_MINUTES`: Lifetime of JWT tokens (default: `480`).
-- `CORS_ORIGINS`: Comma-separated list of allowed origins (e.g. `http://localhost:3000,http://localhost:8000`). Defaults to standard local development ports if unset.
+All variables are listed in the root `.env.example`.
 
-### 3. Run the Backend
-```powershell
-py -3.12 -m uvicorn backend.main:app --reload --port 8000
-```
+| Variable | Purpose |
+| --- | --- |
+| `GOOGLE_API_KEY` | Gemini model and embedding access |
+| `PROVIDER` | Model provider; defaults to `gemini` |
+| `MODEL` | Primary model |
+| `FALLBACK_MODEL` | Fallback model |
+| `MONGODB_URI` | MongoDB URI; defaults to local MongoDB |
+| `MONGODB_DB_NAME` | Database name |
+| `JWT_SECRET` | Required signing key, minimum 32 characters |
+| `JWT_EXPIRES_MINUTES` | Token lifetime |
+| `CORS_ORIGINS` | Optional comma-separated browser origins |
+| `MAX_OUTPUT_TOKENS` | Maximum generated response tokens |
+| `LOGIN_RATE_LIMIT_ATTEMPTS` | Failed logins allowed per email and IP window |
+| `LOGIN_RATE_LIMIT_WINDOW_SECONDS` | Per-email login limit window |
+| `LOGIN_RATE_LIMIT_IP_ATTEMPTS` | Failed logins allowed across emails from one IP |
+| `LOGIN_RATE_LIMIT_IP_WINDOW_SECONDS` | Per-IP login limit window |
+| `SUPPORTAI_DATA_FILE` | Override for the local Mongo-compatible file store |
+| `SUPPORTAI_FIXTURE_DIR` | Override for read-only customer/order/policy fixtures |
+| `SUPPORTAI_RUNTIME_DIR` | Override for runtime actions and local data |
+| `CHROMA_DIR` | Override for the Chroma vector index (default `data/runtime/chroma_db`) |
 
-- API Base: `http://127.0.0.1:8000`
-- Interactive OpenAPI Docs: `http://127.0.0.1:8000/docs`
-- Health check: `http://127.0.0.1:8000/health`
-- Dynamic Model Info: `http://127.0.0.1:8000/system/model-info`
+## Create an admin
 
-### 4. Run the Frontends
-You can open `frontend/customer/index.html` and `frontend/admin/index.html` directly in your browser or serve them with Python:
-
-```powershell
-# Customer Frontend (Port 3000)
-py -3.12 -m http.server 3000 --directory frontend/customer
-
-# Admin Console (Port 3001)
-py -3.12 -m http.server 3001 --directory frontend/admin
-```
-
-### 5. Provision Admin Account
-Public registration creates customers only. Admin users must be provisioned via the management CLI:
+Public registration only creates customer accounts. Create an administrator from the repository root:
 
 ```powershell
-py -3.12 -m backend.manage_admin create --email admin@supportai.com --password AdminPassword123! --name "Support Admin"
+python -m scripts.manage_admin create --email admin@example.com --password "UseAUniquePassword123!" --name "Support Admin"
 ```
 
----
+Passwords must be at least 10 characters. Stop the API before running `manage_admin` when the local file-backed store is active.
 
-## Storage & Reliability Highlights
+## Run the API and browser apps
 
-1. **Persistent Local Fallback Database**:
-   - Automatically activates if MongoDB is unreachable within 2.5 seconds.
-   - Guarded by re-entrant locks (`threading.RLock`) for thread-safety.
-   - Employs atomic disk writes (`tempfile` + `os.replace`) to prevent corrupted data.
-   - Automatically re-applies unique indexes (`users.email`, `tickets.ticket_id`, `conversations.conversation_id`) on reload.
-2. **Accurate Health Reporting**:
-   - `GET /health` distinguishes between live MongoDB connections and the local persistent fallback store.
-3. **Dynamic Model Indicators**:
-   - Frontends fetch active model branding from `/system/model-info`, gracefully falling back to `● AI Model — unavailable` if offline.
-4. **Security & Business Action Guardrails**:
-   - Customer/order ownership verification prevents unauthorized cross-customer inquiries or operations.
-   - Deterministic policy eligibility and duplicate checks prevent duplicate refunds or cancellations.
-   - Sliding-window rate limiting (30 req/min) and message size limits (4,000 chars) protect chat endpoints.
-   - Document upload limits (10MB) and RAG untrusted boundary markers protect agent workflows against prompt injection.
-   - Feedback persistence endpoint (`/chat/feedback`) saves customer satisfaction ratings to the conversation record.
-   - Ticket status update uses `matched_count` semantics so no-op updates succeed without false 404 errors.
-   - Conversation list queries exclude message bodies and support limit/skip pagination for optimal performance.
-
----
-
-## Running Verification Tests
+Start the API from the repository root:
 
 ```powershell
-# Complete test suite via pytest
-py -3.12 -m pytest
-
-# Or run individual phase verification suites:
-py -3.12 -m backend.test_phase1                   # Phase 1: Database & Persistent Store Sanity
-py -3.12 -m backend.test_phase2                   # Phase 2: Full API, Auth, Documents & Tickets
-py -3.12 -m backend.test_phase3_security          # Phase 3: Critical Security (C1, C2, C7)
-py -3.12 -m backend.test_phase4_business_actions  # Phase 4: Business Action Safety (C3–C6)
-py -3.12 -m backend.test_phase5_reliability       # Phase 5: High Priority Reliability (H1–H6)
-py -3.12 -m backend.test_phase6_medium            # Phase 6: Medium Priority Hardening (M1–M9)
-py -3.12 -m backend.test_phase7_low               # Phase 7: Low Priority & Maintainability (L1–L6)
-
-# Business Action core unit tests:
-py -3.12 -m pytest final_customer_support/tests/test_business_actions.py
+python -m uvicorn backend.app.main:app --reload --port 8000
 ```
+
+OpenAPI docs are at `http://127.0.0.1:8000/docs`; the health check is `/health`.
+
+In separate terminals, serve each static frontend:
+
+```powershell
+python -m http.server 3000 --directory frontend/demo-customer
+python -m http.server 3001 --directory frontend/admin
+```
+
+Open `http://127.0.0.1:3000` for customer chat and `http://127.0.0.1:3001` for the admin console.
+
+## Admin routes
+
+All admin routes require an admin bearer token.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /tickets` | List or filter tickets |
+| `GET /tickets/{ticket_id}` | Read one ticket |
+| `PATCH /tickets/{ticket_id}` | Update ticket status and resolution |
+| `GET /admin/actions` | Review action requests, optionally by status |
+| `PATCH /admin/actions/{reference}` | Approve or reject a pending action |
+| `GET /admin/documents` | List indexed policy documents |
+| `POST /admin/documents/upload` | Upload a policy document |
+| `DELETE /admin/documents/{document_id}` | Remove a policy document and its vectors |
+
+Customer authentication and chat routes include `/auth/register`, `/auth/login`, `/chat/message`, `/chat/conversations`, and `/chat/feedback`.
+
+## Run tests
+
+```powershell
+py -3.12 -m pytest -q
+```
+
+The suite uses local stubs and isolated temporary stores; live provider credentials are not required.
+
+## Data safety and storage limits
+
+`data/fixtures/` contains read-only customer, order, and policy examples. Runtime actions and the local database belong under `data/runtime/`; the runtime directory is ignored by Git. The Chroma policy index lives in `data/runtime/chroma_db/`.
+
+When MongoDB is unreachable, the app can use the JSON-backed file store at `data/runtime/db_store.json`. Its lock only coordinates threads in one Python process. It is for local demos and single-process use, not a multi-worker deployment. Stop the API before using `manage_admin` with that fallback store.
+
